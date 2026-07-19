@@ -22,6 +22,17 @@
     "@earendil-works/pi-tui": "*",
     "typebox": "*"
   },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  },
   "pi": {
     "extensions": [
       "./extensions/custom-pi.ts"
