@@ -74,12 +74,13 @@ const stripTerminalControls = (line) => line
 	.replace(/\x1b\]133;[ABC]\x07/g, "")
 	.replace(/\x1b\[[0-9;]*m/g, "");
 
-test("workspace context writes stay behind the agent tool", async () => {
-	const command = customPiExtension.commands.get("workspace-context");
+test("context title writes stay behind the agent tool", async () => {
+	const command = customPiExtension.commands.get("ctx-title");
 	const tool = customPiExtension.tools.get("set_workspace_context");
 	assert.ok(command);
 	assert.ok(tool);
-	assert.equal(command.description, "Show or clear the stable parent workspace context and session display name");
+	assert.equal(customPiExtension.commands.has("workspace-context"), false);
+	assert.equal(command.description, "Show or clear the stable parent context title and session display name");
 	assert.match(tool.definition.description, /active project's instructions/);
 
 	const notifications = [];
@@ -89,9 +90,9 @@ test("workspace context writes stay behind the agent tool", async () => {
 	await command.handler("wt:manual override", ctx);
 
 	assert.deepEqual(notifications, [
-		{ message: "Workspace context: unset", level: "info" },
-		{ message: "Usage: /workspace-context [clear]", level: "error" },
-		{ message: "Usage: /workspace-context [clear]", level: "error" },
+		{ message: "Context title: unset", level: "info" },
+		{ message: "Usage: /ctx-title [clear]", level: "error" },
+		{ message: "Usage: /ctx-title [clear]", level: "error" },
 	]);
 });
 

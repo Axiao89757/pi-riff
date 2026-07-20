@@ -8,8 +8,8 @@ Personal [Pi](https://pi.dev) extension for a compact, work-focused terminal UI.
 - Tool and agent timing
 - Right-aligned user messages with local timestamps
 - Clipboard image attachment, thumbnails, and expanded image display
-- Compact editor rail, footer identity, model statistics, and workspace context
-- Persistent workspace context mirrored to the Pi session name
+- Compact editor rail, footer identity, model statistics, and context title
+- Persistent context title mirrored to the Pi session name
 - Automatic collapse of tool output when a new tool starts
 
 ## Compatibility
@@ -37,7 +37,7 @@ Restart Pi after the first install. Use `/reload` after subsequent updates.
 - `/image-size [full|thumbnail]`: toggle or set user image size
 - `/tool-style [minimal|compact]`: select collapsed tool rendering
 - `/compact-tools`: collapse tool output
-- `/workspace-context [clear]`: show or clear the stable workspace context
+- `/ctx-title [clear]`: show or clear the stable context title
 
 `Ctrl+Shift+I` toggles user images between thumbnail and expanded display.
 

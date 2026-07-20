@@ -1923,44 +1923,44 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerTool({
 		name: "set_workspace_context",
-		label: "Set Workspace Context",
-		description: "Set and persist the stable parent workspace context shown in Pi's footer and mirror it to the current session display name. Follow the active project's instructions when choosing the status. Omit status to clear both values.",
-		promptSnippet: "Set or clear the stable parent workspace context and current session display name",
+		label: "Set Context Title",
+		description: "Set and persist the stable parent context title shown in Pi's footer and mirror it to the current session display name. Follow the active project's instructions when choosing the title. Omit status to clear both values.",
+		promptSnippet: "Set or clear the stable parent context title and current session display name",
 		parameters: Type.Object({
 			status: Type.Optional(Type.String({
 				maxLength: MAX_WORKSPACE_CONTEXT_LENGTH,
-				description: "Short complete context chosen according to the active project's instructions; omit to clear",
+				description: "Short complete context title chosen according to the active project's instructions; omit to clear",
 			})),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const status = params.status === undefined ? undefined : normalizeWorkspaceContext(params.status);
-			if (params.status !== undefined && !status) throw new Error("Workspace context status must not be empty.");
+			if (params.status !== undefined && !status) throw new Error("Context title must not be empty.");
 			setWorkspaceContext(ctx, status, true);
 			return {
 				content: [{
 					type: "text",
 					text: status
-						? `Workspace context and session name set to ${status}`
-						: "Workspace context and session name cleared",
+						? `Context title and session name set to ${status}`
+						: "Context title and session name cleared",
 				}],
 				details: { status: status ?? null, sessionName: status ?? null },
 			};
 		},
 	});
 
-	pi.registerCommand("workspace-context", {
-		description: "Show or clear the stable parent workspace context and session display name",
+	pi.registerCommand("ctx-title", {
+		description: "Show or clear the stable parent context title and session display name",
 		handler: async (args, ctx) => {
 			const value = args.trim();
 			if (!value) {
-				ctx.ui.notify(`Workspace context: ${workspaceContextStatus ?? "unset"}`, "info");
+				ctx.ui.notify(`Context title: ${workspaceContextStatus ?? "unset"}`, "info");
 				return;
 			}
 			if (value === "clear") {
 				setWorkspaceContext(ctx, undefined, true);
 				return;
 			}
-			ctx.ui.notify("Usage: /workspace-context [clear]", "error");
+			ctx.ui.notify("Usage: /ctx-title [clear]", "error");
 		},
 	});
 
