@@ -37,7 +37,7 @@ Restart Pi after the first install. Use `/reload` after subsequent updates.
 - `/image-size [full|thumbnail]`: toggle or set user image size
 - `/tool-style [minimal|compact]`: select collapsed tool rendering
 - `/compact-tools`: collapse tool output
-- `/workspace-context [status|update|clear]`: manage the stable workspace context
+- `/workspace-context [clear]`: show or clear the stable workspace context
 
 `Ctrl+Shift+I` toggles user images between thumbnail and expanded display.
 

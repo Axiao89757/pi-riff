@@ -1924,12 +1924,12 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "set_workspace_context",
 		label: "Set Workspace Context",
-		description: "Set and persist the stable parent workspace context shown in Pi's footer and mirror it to the current session display name. Use this for the large feature, bug fix, delivery effort, or root workflow; keep it unchanged for subtasks. Omit status to clear both values when the parent context is unknown.",
+		description: "Set and persist the stable parent workspace context shown in Pi's footer and mirror it to the current session display name. Follow the active project's instructions when choosing the status. Omit status to clear both values.",
 		promptSnippet: "Set or clear the stable parent workspace context and current session display name",
 		parameters: Type.Object({
 			status: Type.Optional(Type.String({
 				maxLength: MAX_WORKSPACE_CONTEXT_LENGTH,
-				description: "Short complete context, for example wt:查新结果展示, wt:修复报告下载超时, or root:检查会话持久化; omit to clear",
+				description: "Short complete context chosen according to the active project's instructions; omit to clear",
 			})),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -1949,30 +1949,18 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("workspace-context", {
-		description: "Show, update, set, or clear the stable parent workspace context and session display name",
+		description: "Show or clear the stable parent workspace context and session display name",
 		handler: async (args, ctx) => {
 			const value = args.trim();
 			if (!value) {
 				ctx.ui.notify(`Workspace context: ${workspaceContextStatus ?? "unset"}`, "info");
 				return;
 			}
-			if (value === "update") {
-				pi.sendUserMessage(
-					`Re-evaluate the stable parent Workspace context for this FTO session. Current context: ${workspaceContextStatus ?? "unset"}. Inspect only the concrete backend and frontend product repositories and their registered worktrees. Keep the current context if the parent workstream and worktree binding are unchanged. Only call set_workspace_context if the parent workstream or binding changed; clear it if the source is unreliable. Do not edit files.`,
-					{ deliverAs: "followUp" },
-				);
-				return;
-			}
 			if (value === "clear") {
 				setWorkspaceContext(ctx, undefined, true);
 				return;
 			}
-			const status = normalizeWorkspaceContext(value);
-			if (!status) {
-				ctx.ui.notify("Workspace context status must not be empty.", "error");
-				return;
-			}
-			setWorkspaceContext(ctx, status, true);
+			ctx.ui.notify("Usage: /workspace-context [clear]", "error");
 		},
 	});
 
