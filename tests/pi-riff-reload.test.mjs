@@ -115,6 +115,68 @@ test("context title writes stay behind the agent tool", async () => {
 	]);
 });
 
+test("reload removes the legacy display summary field from tool schemas", () => {
+	const script = `
+		import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+		import { tmpdir } from "node:os";
+		import { join } from "node:path";
+		import { pathToFileURL } from "node:url";
+		const extensionPath = ${JSON.stringify(extensionPath)};
+		const piRoot = ${JSON.stringify(piRoot)};
+		const repositoryRoot = ${JSON.stringify(repositoryRoot)};
+		const agentDir = mkdtempSync(join(tmpdir(), "pi-riff-schema-"));
+		mkdirSync(join(agentDir, "extensions"));
+		symlinkSync(extensionPath, join(agentDir, "extensions", "pi-riff.ts"));
+		const { createAgentSession } = await import(pathToFileURL(join(piRoot, "dist", "core", "sdk.js")).href);
+		const { SessionManager } = await import(pathToFileURL(join(piRoot, "dist", "core", "session-manager.js")).href);
+		const legacyTool = {
+			name: "legacy_probe",
+			label: "Legacy probe",
+			description: "Tool carrying the pre-intent display field",
+			parameters: {
+				type: "object",
+				properties: { _display_summary: { type: "string" }, query: { type: "string" } },
+				required: ["query"],
+			},
+			execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+		};
+		const { session, extensionsResult } = await createAgentSession({
+			cwd: repositoryRoot,
+			agentDir,
+			customTools: [legacyTool],
+			sessionManager: SessionManager.inMemory(repositoryRoot),
+		});
+		const ui = new Proxy({ theme: {}, getToolsExpanded: () => false }, {
+			get: (target, property) => property in target ? target[property] : () => undefined,
+		});
+		try {
+			await session.bindExtensions({ mode: "rpc", uiContext: ui });
+			const tool = session.getAllTools().find((candidate) => candidate.name === "legacy_probe");
+			console.log(JSON.stringify({
+				extensionErrors: extensionsResult.errors.length,
+				hasLegacyProperty: "_display_summary" in tool.parameters.properties,
+				hasLegacyRequired: tool.parameters.required.includes("_display_summary"),
+				hasIntentProperty: "intent" in tool.parameters.properties,
+				hasIntentRequired: tool.parameters.required.includes("intent"),
+			}));
+		} finally {
+			session.dispose();
+			rmSync(agentDir, { recursive: true, force: true });
+		}
+	`;
+	const result = JSON.parse(execFileSync(process.execPath, ["--input-type=module"], {
+		encoding: "utf8",
+		input: script,
+	}));
+	assert.deepEqual(result, {
+		extensionErrors: 0,
+		hasLegacyProperty: false,
+		hasLegacyRequired: false,
+		hasIntentProperty: true,
+		hasIntentRequired: true,
+	});
+});
+
 test("Friendly tool summaries are display-only and all four modes are selectable", async () => {
 	const toolCallHandlers = customPiExtension.handlers.get("tool_call") ?? [];
 	assert.equal(toolCallHandlers.length, 1);
@@ -122,14 +184,14 @@ test("Friendly tool summaries are display-only and all four modes are selectable
 		type: "tool_call",
 		toolName: "probe",
 		toolCallId: "probe-call",
-		input: { query: "raw query", intent: "检查后台会话状态" },
+		input: { query: "raw query", intent: "检查后台会话状态", _display_summary: "legacy summary" },
 	};
 	for (const handler of toolCallHandlers) await handler(toolCall, {});
 	assert.deepEqual(toolCall.input, { query: "raw query" });
 
 	const contextHandlers = customPiExtension.handlers.get("context") ?? [];
 	assert.equal(contextHandlers.length, 1);
-	const originalArguments = { query: "raw query", intent: "检查后台会话状态" };
+	const originalArguments = { query: "raw query", intent: "检查后台会话状态", _display_summary: "legacy summary" };
 	const contextEvent = {
 		type: "context",
 		messages: [{ role: "assistant", content: [{ type: "toolCall", id: "probe-call", name: "probe", arguments: originalArguments }] }],
@@ -137,6 +199,7 @@ test("Friendly tool summaries are display-only and all four modes are selectable
 	const contextResult = await contextHandlers[0](contextEvent, {});
 	assert.deepEqual(contextResult.messages[0].content[0].arguments, { query: "raw query" });
 	assert.equal(originalArguments.intent, "检查后台会话状态");
+	assert.equal(originalArguments._display_summary, "legacy summary");
 
 	const toolStyle = customPiExtension.commands.get("tool-style");
 	assert.ok(toolStyle);
@@ -186,6 +249,7 @@ test("Friendly tool summaries are display-only and all four modes are selectable
 	component.setExpanded(true);
 	const fullLines = component.render(100).map(stripTerminalControls);
 	assert.equal(fullLines.some((line) => line.includes("intent")), false);
+	assert.equal(fullLines.some((line) => line.includes("_display_summary")), false);
 	assert.equal(expandedStates.at(-1), true);
 	assert.deepEqual(notifications.map((entry) => entry.message), [
 		"Tool display mode: friendly",

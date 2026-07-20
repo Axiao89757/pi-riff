@@ -43,6 +43,7 @@ const MAX_ERROR_LENGTH = 180;
 const MAX_CTX_TITLE_LENGTH = 120;
 const MAX_TOOL_INTENT_LENGTH = 40;
 const TOOL_INTENT_FIELD = "intent";
+const LEGACY_DISPLAY_SUMMARY_FIELD = "_display_summary";
 const CTX_TITLE_STATUS_KEY = "ctx-title";
 const CTX_TITLE_ENTRY = "custom-pi-ctx-title";
 const AGENT_TIMING_ENTRY = "compact-agent-timing";
@@ -377,6 +378,7 @@ function addToolIntentParameter(tool: Pick<ToolDefinition, "parameters">): boole
 	const schema = tool.parameters as unknown as ObjectParameterSchema;
 	if (schema.type !== "object" || !schema.properties) return false;
 
+	delete schema.properties[LEGACY_DISPLAY_SUMMARY_FIELD];
 	if (!(TOOL_INTENT_FIELD in schema.properties)) {
 		schema.properties = {
 			[TOOL_INTENT_FIELD]: Type.String({
@@ -388,7 +390,8 @@ function addToolIntentParameter(tool: Pick<ToolDefinition, "parameters">): boole
 	}
 	schema.required = [
 		TOOL_INTENT_FIELD,
-		...(schema.required ?? []).filter((key) => key !== TOOL_INTENT_FIELD),
+		...(schema.required ?? []).filter((key) =>
+			key !== TOOL_INTENT_FIELD && key !== LEGACY_DISPLAY_SUMMARY_FIELD),
 	];
 	return true;
 }
@@ -482,9 +485,13 @@ function genericErrorComponent(instance: GenericToolExecutionInstance): Componen
 }
 
 function argsWithoutToolIntent(args: Record<string, unknown>): Record<string, unknown> {
-	if (!args || !Object.prototype.hasOwnProperty.call(args, TOOL_INTENT_FIELD)) return args;
+	if (!args) return args;
+	const hasIntent = Object.prototype.hasOwnProperty.call(args, TOOL_INTENT_FIELD);
+	const hasLegacySummary = Object.prototype.hasOwnProperty.call(args, LEGACY_DISPLAY_SUMMARY_FIELD);
+	if (!hasIntent && !hasLegacySummary) return args;
 	const cleanArgs = { ...args };
 	delete cleanArgs[TOOL_INTENT_FIELD];
+	delete cleanArgs[LEGACY_DISPLAY_SUMMARY_FIELD];
 	return cleanArgs;
 }
 
@@ -2227,11 +2234,11 @@ export default function (pi: ExtensionAPI) {
 		const messages = event.messages.map((message) => {
 			if (message.role !== "assistant") return message;
 			const content = message.content.map((block) => {
-				if (block.type !== "toolCall" || !Object.prototype.hasOwnProperty.call(block.arguments, TOOL_INTENT_FIELD)) {
-					return block;
-				}
+				if (block.type !== "toolCall") return block;
+				const cleanArguments = argsWithoutToolIntent(block.arguments);
+				if (cleanArguments === block.arguments) return block;
 				changed = true;
-				return { ...block, arguments: argsWithoutToolIntent(block.arguments) };
+				return { ...block, arguments: cleanArguments };
 			});
 			return content.some((block, index) => block !== message.content[index])
 				? { ...message, content }
@@ -2242,6 +2249,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("tool_call", (event) => {
 		delete event.input[TOOL_INTENT_FIELD];
+		delete event.input[LEGACY_DISPLAY_SUMMARY_FIELD];
 	});
 
 	pi.on("tool_execution_start", (_event, ctx) => {
