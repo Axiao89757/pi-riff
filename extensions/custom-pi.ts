@@ -9,6 +9,7 @@ import {
 	CustomEditor,
 	FooterComponent,
 	InteractiveMode,
+	parseSkillBlock,
 	SkillInvocationMessageComponent,
 	ToolExecutionComponent,
 	UserMessageComponent,
@@ -259,6 +260,7 @@ type InteractiveModePrototype = {
 	customPiToolGroupingPatched?: boolean;
 	customPiUserImagesPatched?: boolean;
 	customPiUserImagesV2Patched?: boolean;
+	customPiUserMessagesV3Patched?: boolean;
 	customPiUserMessageTimestampPatched?: boolean;
 	getMarkdownThemeWithSettings(): Record<string, unknown>;
 	addMessageToChat(
@@ -1023,12 +1025,14 @@ function bindUserMessageImages(instance: UserMessageInstance, message: Assistant
 	);
 	if (imageBlocks.length === 0) return;
 
-	const sourceText = message.content
+	const rawText = message.content
 		.filter((block) => block.type === "text" && typeof block.text === "string")
 		.map((block) => block.text)
 		.join("");
-	const filenames = [...sourceText.matchAll(USER_IMAGE_MARKER)].map((match) => match[1].trim());
-	const displayText = sourceText.replace(USER_IMAGE_MARKER, "").trim();
+	const skillBlock = parseSkillBlock(rawText);
+	const displaySource = skillBlock ? skillBlock.userMessage ?? "" : rawText;
+	const filenames = [...displaySource.matchAll(USER_IMAGE_MARKER)].map((match) => match[1].trim());
+	const displayText = displaySource.replace(USER_IMAGE_MARKER, "").trim();
 	if (instance.text !== displayText) {
 		instance.text = displayText;
 		instance.rebuild();
@@ -1239,10 +1243,6 @@ function installUserMessageTimestamps(): void {
 		if (message.role !== "user" || !Array.isArray(message.content)
 			|| !message.content.some((block) => block.type === "image")) return;
 
-		for (const component of instance.chatContainer.children.slice(beforeCount)) {
-			if (component instanceof SkillInvocationMessageComponent) component.setExpanded(false);
-		}
-
 		const userComponent = instance.chatContainer.children
 			.slice(beforeCount)
 			.filter((component): component is UserMessageComponent => component instanceof UserMessageComponent)
@@ -1274,6 +1274,24 @@ function installUserMessageTimestamps(): void {
 			bindCurrentUserImages(this, beforeCount, message);
 		};
 		Object.defineProperty(interactivePrototype, "customPiUserImagesV2Patched", {
+			value: true,
+			configurable: false,
+			writable: false,
+		});
+	}
+
+	if (!interactivePrototype.customPiUserMessagesV3Patched) {
+		const addMessageWithCurrentPresentation = interactivePrototype.addMessageToChat;
+		interactivePrototype.addMessageToChat = function (message, options) {
+			const beforeCount = this.chatContainer.children.length;
+			addMessageWithCurrentPresentation.call(this, message, options);
+			if (message.role !== "user") return;
+			for (const component of this.chatContainer.children.slice(beforeCount)) {
+				if (component instanceof SkillInvocationMessageComponent) component.setExpanded(false);
+			}
+			bindCurrentUserImages(this, beforeCount, message);
+		};
+		Object.defineProperty(interactivePrototype, "customPiUserMessagesV3Patched", {
 			value: true,
 			configurable: false,
 			writable: false,

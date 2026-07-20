@@ -25,7 +25,7 @@ const loaderUrl = pathToFileURL(join(piRoot, loaderRelativePath));
 const indexUrl = pathToFileURL(join(piRoot, "dist", "index.js"));
 const themeUrl = pathToFileURL(join(piRoot, "dist", "modes", "interactive", "theme", "theme.js"));
 const { loadExtensions } = await import(loaderUrl.href);
-const { FooterComponent, InteractiveMode, SkillInvocationMessageComponent, UserMessageComponent } = await import(indexUrl.href);
+const { FooterComponent, InteractiveMode, SkillInvocationMessageComponent, UserMessageComponent, parseSkillBlock } = await import(indexUrl.href);
 const { initTheme } = await import(themeUrl.href);
 initTheme("dark");
 
@@ -59,16 +59,13 @@ interactivePrototype.addMessageToChat = function (message) {
 	const text = Array.isArray(message.content)
 		? message.content.filter((block) => block.type === "text").map((block) => block.text).join("")
 		: "";
-	if (message.testSkillImage) {
-		const skill = new SkillInvocationMessageComponent({
-			name: "diagnosing-bugs",
-			location: "/tmp/diagnosing-bugs/SKILL.md",
-			content: "full skill content",
-		});
+	const skillBlock = message.testSkillInvocation ? parseSkillBlock(text) : undefined;
+	if (skillBlock) {
+		const skill = new SkillInvocationMessageComponent(skillBlock);
 		skill.setExpanded(true);
 		this.chatContainer.children.push(skill);
 	}
-	const component = new UserMessageComponent(text);
+	const component = new UserMessageComponent(skillBlock?.userMessage ?? text);
 	component.customPiImages = [{
 		component: { invalidate() {} },
 		dimensions: { widthPx: 1, heightPx: 1 },
@@ -116,21 +113,37 @@ test("context title writes stay behind the agent tool", async () => {
 	]);
 });
 
-test("clipboard image messages keep skill invocations collapsed", () => {
+test("skill messages stay collapsed and image binding does not leak skill text", () => {
+	const skillText = `<skill name="diagnosing-bugs" location="/tmp/diagnosing-bugs/SKILL.md">\nfull skill content\n</skill>\n\n[Image attached: screenshot.png] inspect this`;
 	const instance = { chatContainer: { children: [] } };
 	interactivePrototype.addMessageToChat.call(instance, {
 		role: "user",
 		timestamp: Date.now(),
-		testSkillImage: true,
+		testSkillInvocation: true,
 		content: [
-			{ type: "text", text: "[Image attached: screenshot.png]" },
+			{ type: "text", text: skillText },
 			{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
 		],
 	});
 
 	const skill = instance.chatContainer.children.find((component) => component instanceof SkillInvocationMessageComponent);
+	const imageUser = instance.chatContainer.children.find((component) => component instanceof UserMessageComponent);
 	assert.ok(skill);
+	assert.ok(imageUser);
 	assert.equal(skill.expanded, false);
+	assert.equal(imageUser.text, "inspect this");
+	assert.doesNotMatch(imageUser.text, /<skill|full skill content/);
+
+	const noImageInstance = { chatContainer: { children: [] } };
+	interactivePrototype.addMessageToChat.call(noImageInstance, {
+		role: "user",
+		timestamp: Date.now(),
+		testSkillInvocation: true,
+		content: [{ type: "text", text: `${skillText}\n\nno image question` }],
+	});
+	const noImageSkill = noImageInstance.chatContainer.children.find((component) => component instanceof SkillInvocationMessageComponent);
+	assert.ok(noImageSkill);
+	assert.equal(noImageSkill.expanded, false);
 	legacyBindings = 0;
 });
 
