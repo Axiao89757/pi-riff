@@ -1,4 +1,4 @@
-# custom-pi
+# pi-riff
 
 Personal [Pi](https://pi.dev) extension for a compact, work-focused terminal UI.
 
@@ -24,13 +24,13 @@ This extension customizes Pi's exported interactive components and prototypes. K
 ## Install
 
 ```bash
-pi install git:github.com/Axiao89757/custom-pi
+pi install git:github.com/Axiao89757/pi-riff
 ```
 
 Update an installed copy with:
 
 ```bash
-pi update --extension git:github.com/Axiao89757/custom-pi
+pi update --extension git:github.com/Axiao89757/pi-riff
 ```
 
 Restart Pi after the first install. Use `/reload` after subsequent updates.
@@ -49,7 +49,7 @@ Restart Pi after the first install. Use `/reload` after subsequent updates.
 Load the working copy directly:
 
 ```bash
-pi --no-extensions --extension ./extensions/custom-pi.ts
+pi --no-extensions --extension ./extensions/pi-riff.ts
 ```
 
 Run the hot-reload compatibility tests:

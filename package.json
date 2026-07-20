@@ -1,8 +1,8 @@
 {
-  "name": "@axiao89757/custom-pi",
+  "name": "@axiao89757/pi-riff",
   "version": "0.1.0",
   "private": true,
-  "description": "Personal TUI and workflow extension for Pi",
+  "description": "Focused TUI and workflow refinements for Pi",
   "type": "module",
   "files": [
     "extensions/",
@@ -35,7 +35,7 @@
   },
   "pi": {
     "extensions": [
-      "./extensions/custom-pi.ts"
+      "./extensions/pi-riff.ts"
     ]
   }
 }

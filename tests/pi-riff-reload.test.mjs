@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const extensionPath = join(repositoryRoot, "extensions", "custom-pi.ts");
+const extensionPath = join(repositoryRoot, "extensions", "pi-riff.ts");
 const loaderRelativePath = join("dist", "core", "extensions", "loader.js");
 const piExecutable = realpathSync(execFileSync("which", ["pi"], { encoding: "utf8" }).trim());
 let piRoot = dirname(dirname(piExecutable));

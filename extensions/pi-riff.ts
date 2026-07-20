@@ -37,7 +37,7 @@ import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 
-// Global Custom Pi behavior: compact tools, focused footer data, context title, and clipboard images.
+// Global pi-riff behavior: compact tools, focused footer data, context title, and clipboard images.
 const MAX_CALL_LENGTH = 120;
 const MAX_ERROR_LENGTH = 180;
 const MAX_CTX_TITLE_LENGTH = 120;
