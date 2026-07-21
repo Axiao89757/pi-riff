@@ -46,7 +46,6 @@ const MAX_CTX_TITLE_LENGTH = 120;
 const MAX_FRIENDLY_SUMMARY_LENGTH = 40;
 const LEGACY_DISPLAY_SUMMARY_FIELD = "_display_summary";
 const SUMMARY_CONFIG_FILE = "pi-riff.json";
-const SUMMARY_MODEL_KEY = "summaryModel";
 const DEFAULT_SUMMARY_MODEL = "current";
 const SUMMARY_TIMEOUT_MS = 5000;
 const MAX_SUMMARY_TASK_LENGTH = 2000;
