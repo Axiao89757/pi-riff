@@ -277,6 +277,66 @@ test("Friendly labels are local, deterministic, and all four modes are selectabl
 	await toolStyle.handler("friendly", ctx);
 });
 
+test("Command uses relative paths, preserves both ends, and right-aligns facts", async () => {
+	const toolStyle = customPiExtension.commands.get("tool-style");
+	await toolStyle.handler("command", { ui: { notify() {}, setToolsExpanded() {} } });
+
+	const read = new ToolExecutionComponent(
+		"read",
+		"command-read",
+		{ path: join(repositoryRoot, "docs", "agents", "issue-tracker.md") },
+		{},
+		undefined,
+		{ requestRender() {} },
+		repositoryRoot,
+	);
+	read.updateResult({ content: [{ type: "text", text: "one\ntwo\nthree" }], details: undefined, isError: false });
+	const readLine = read.render(80).map(stripTerminalControls).find((line) => line.includes("read"));
+	assert.ok(readLine);
+	assert.match(readLine, /read docs\/agents\/issue-tracker\.md/);
+	assert.doesNotMatch(readLine, new RegExp(repositoryRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+	assert.match(readLine, /3 lines\s+\d+(?:\.\d+)?(?:ms|s)$/);
+	assert.equal(readLine.length, 80);
+	assert.ok(read.render(12).every((line) => stripTerminalControls(line).length <= 12));
+
+	const command = new ToolExecutionComponent(
+		"bash",
+		"command-bash",
+		{ command: `git -C ${repositoryRoot} status --short -- ${"deep/".repeat(18)}important-target.md` },
+		{},
+		undefined,
+		{ requestRender() {} },
+		repositoryRoot,
+	);
+	command.updateResult({ content: [], details: undefined, isError: false });
+	const commandLine = command.render(72).map(stripTerminalControls).find((line) => line.includes("git"));
+	assert.ok(commandLine);
+	assert.match(commandLine, /^\$ git -C \. status/);
+	assert.match(commandLine, /\.\.\..*important-target\.md\s+\d+(?:\.\d+)?(?:ms|s)$/);
+	assert.equal(commandLine.length, 72);
+
+	await toolStyle.handler("friendly", { ui: { notify() {}, setToolsExpanded() {} } });
+});
+
+test("Command exposes deterministic edit, write, and search facts", async () => {
+	const toolStyle = customPiExtension.commands.get("tool-style");
+	await toolStyle.handler("command", { ui: { notify() {}, setToolsExpanded() {} } });
+	const cases = [
+		{ tool: "edit", args: { path: "/tmp/project/a.ts", edits: [{ oldText: "a", newText: "b" }, { oldText: "c", newText: "d" }] }, result: "ok", expected: /2 edits/ },
+		{ tool: "write", args: { path: "/tmp/project/a.txt", content: "hello" }, result: "ok", expected: /5 bytes/ },
+		{ tool: "grep", args: { pattern: "needle", path: "/tmp/project" }, result: "a.ts:1: needle\nb.ts:2: needle", expected: /2 matches/ },
+		{ tool: "find", args: { pattern: "*.ts", path: "/tmp/project" }, result: "a.ts\nb.ts", expected: /2 files/ },
+		{ tool: "ls", args: { path: "/tmp/project" }, result: "a.ts\nb.ts\nsrc/", expected: /3 entries/ },
+	];
+	for (const [index, item] of cases.entries()) {
+		const component = new ToolExecutionComponent(item.tool, `fact-${index}`, item.args, {}, undefined, { requestRender() {} }, "/tmp/project");
+		component.updateResult({ content: [{ type: "text", text: item.result }], details: undefined, isError: false });
+		const line = component.render(90).map(stripTerminalControls).find((candidate) => candidate.trim());
+		assert.match(line, item.expected);
+	}
+	await toolStyle.handler("friendly", { ui: { notify() {}, setToolsExpanded() {} } });
+});
+
 test("Friendly labels describe file operations without model output", () => {
 	const cases = [
 		{ tool: "read", args: { path: "/tmp/project/package.json" }, expected: "读取 package.json" },

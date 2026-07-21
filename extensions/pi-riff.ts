@@ -29,6 +29,7 @@ import {
 	type ImageDimensions,
 	Spacer,
 	Text,
+	sliceByColumn,
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
@@ -746,7 +747,26 @@ function markMinimalToolGroupAfterBody(message: Pick<AssistantMessage, "content"
 
 function minimalPath(value: unknown, cwd: string): string {
 	if (typeof value !== "string" || !value) return "";
-	return isAbsolute(value) ? formatFooterCwd(value) : value;
+	if (!isAbsolute(value)) return value;
+	const relativeToCwd = relative(resolve(cwd), resolve(value));
+	const isInsideCwd = relativeToCwd === ""
+		|| (relativeToCwd !== ".." && !relativeToCwd.startsWith(`..${sep}`) && !isAbsolute(relativeToCwd));
+	return isInsideCwd ? relativeToCwd || "." : formatFooterCwd(value);
+}
+
+function compactCommandPaths(value: unknown, cwd: string): string {
+	if (typeof value !== "string") return "";
+	let command = value.replace(/\s+/g, " ").trim();
+	const resolvedCwd = resolve(cwd);
+	command = command.replaceAll(`${resolvedCwd}${sep}`, "");
+	command = command.replace(new RegExp(`${escapeRegExp(resolvedCwd)}(?=$|[\\s'\"\x60])`, "g"), ".");
+	const home = process.env.HOME || process.env.USERPROFILE;
+	if (home) {
+		const resolvedHome = resolve(home);
+		command = command.replaceAll(`${resolvedHome}${sep}`, `~${sep}`);
+		command = command.replace(new RegExp(`${escapeRegExp(resolvedHome)}(?=$|[\\s'\"\x60])`, "g"), "~");
+	}
+	return command;
 }
 
 function minimalArgumentPreview(args: Record<string, unknown>): string {
@@ -809,7 +829,7 @@ function minimalToolSummary(instance: MinimalToolExecutionInstance): MinimalTool
 	const path = minimalPath(args.path ?? args.file_path, instance.cwd);
 	switch (instance.toolName) {
 		case "bash": {
-			const detail = compactText(args.command, MAX_CALL_LENGTH);
+			const detail = compactCommandPaths(args.command, instance.cwd);
 			return { label: "$", detail, emphasizedDetailRange: firstShellCommandRange(detail) };
 		}
 		case "read": {
@@ -820,14 +840,10 @@ function minimalToolSummary(instance: MinimalToolExecutionInstance): MinimalTool
 				: "";
 			return { label: "read", detail: `${path}${range}` };
 		}
-		case "edit": {
-			const count = Array.isArray(args.edits) ? args.edits.length : 0;
-			return { label: "edit", detail: `${path}${count ? ` (${count} block${count === 1 ? "" : "s"})` : ""}` };
-		}
-		case "write": {
-			const bytes = typeof args.content === "string" ? Buffer.byteLength(args.content, "utf8") : 0;
-			return { label: "write", detail: `${path}${bytes ? ` (${bytes} bytes)` : ""}` };
-		}
+		case "edit":
+			return { label: "edit", detail: path };
+		case "write":
+			return { label: "write", detail: path };
 		case "grep":
 			return { label: "grep", detail: `/${compactText(args.pattern, 60)}/ in ${path || "."}` };
 		case "find":
@@ -837,6 +853,70 @@ function minimalToolSummary(instance: MinimalToolExecutionInstance): MinimalTool
 		default:
 			return { label: instance.toolName, detail: compactText(minimalArgumentPreview(args), MAX_CALL_LENGTH) };
 	}
+}
+
+function completedResultLineCount(instance: MinimalToolExecutionInstance): number | undefined {
+	if (instance.isPartial || instance.result?.isError || !instance.result) return undefined;
+	if (instance.result.content.some((block) => block.type === "image")) return undefined;
+	const text = instance.result.content
+		.filter((block) => block.type === "text" && typeof block.text === "string")
+		.map((block) => block.text ?? "")
+		.join("\n")
+		.replace(/\n\n\[[^\n]*\]\s*$/, "")
+		.replace(/\n$/, "");
+	return text ? text.split("\n").length : 0;
+}
+
+function pluralizedFact(count: number, singular: string, plural = `${singular}s`): string {
+	return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function minimalToolFact(instance: MinimalToolExecutionInstance): string {
+	if (instance.isPartial || instance.result?.isError) return "";
+	const args = instance.args ?? {};
+	switch (instance.toolName) {
+		case "read": {
+			const lines = completedResultLineCount(instance);
+			return lines === undefined ? "" : pluralizedFact(lines, "line");
+		}
+		case "edit": {
+			const edits = Array.isArray(args.edits) ? args.edits.length : 0;
+			return edits ? pluralizedFact(edits, "edit") : "";
+		}
+		case "write": {
+			const bytes = typeof args.content === "string" ? Buffer.byteLength(args.content, "utf8") : 0;
+			return pluralizedFact(bytes, "byte");
+		}
+		case "grep": {
+			const lines = completedResultLineCount(instance);
+			if (lines === undefined) return "";
+			const hasContext = typeof args.context === "number" && args.context > 0;
+			return pluralizedFact(lines, hasContext ? "line" : "match", hasContext ? "lines" : "matches");
+		}
+		case "find": {
+			const files = completedResultLineCount(instance);
+			return files === undefined ? "" : pluralizedFact(files, "file");
+		}
+		case "ls": {
+			const entries = completedResultLineCount(instance);
+			return entries === undefined ? "" : pluralizedFact(entries, "entry", "entries");
+		}
+		default:
+			return "";
+	}
+}
+
+function truncateMiddleToWidth(text: string, maxWidth: number, ellipsis: string): string {
+	const width = visibleWidth(text);
+	if (width <= maxWidth) return text;
+	const ellipsisWidth = visibleWidth(ellipsis);
+	if (maxWidth <= ellipsisWidth) return truncateToWidth(ellipsis, maxWidth, "", false);
+	const remainingWidth = maxWidth - ellipsisWidth;
+	const prefixWidth = Math.ceil(remainingWidth / 2);
+	const suffixWidth = remainingWidth - prefixWidth;
+	const prefix = sliceByColumn(text, 0, prefixWidth, true);
+	const suffix = sliceByColumn(text, width - suffixWidth, suffixWidth, true);
+	return `${prefix}${ANSI_STYLE_RESET}${ellipsis}${suffix}`;
 }
 
 function friendlyFileName(value: unknown, cwd: string): string {
@@ -983,13 +1063,23 @@ function renderMinimalTool(instance: MinimalToolExecutionInstance, width: number
 	const styledLabel = `${TOOL_GREEN_BOLD}${toolSummary.label}${ANSI_STYLE_RESET}`;
 	const styledDetail = toolSummary.detail ? ` ${styleMinimalToolDetail(toolSummary, theme)}` : "";
 	const duration = instance.isPartial ? undefined : renderedToolDuration(instance, width);
-	const styledDuration = duration ? `  ${theme?.fg("muted", duration) ?? duration}` : "";
+	const fact = toolState.displayMode === "command" ? minimalToolFact(instance) : "";
 	const contentWidth = Math.max(1, width - visibleWidth(runningMarker));
-	const summaryWidth = Math.max(1, contentWidth - visibleWidth(styledDuration));
-	const summary = truncateToWidth(styledLabel + styledDetail, summaryWidth, "...", false);
-	const lines = instance.customPiGroupSpacing
-		? ["", runningMarker + summary + styledDuration]
-		: [runningMarker + summary + styledDuration];
+	const minimumSummaryWidth = Math.min(contentWidth, Math.max(8, visibleWidth(styledLabel)));
+	let metadata = [fact, duration].filter(Boolean).join("  ");
+	if (metadata && visibleWidth(metadata) + minimumSummaryWidth + 2 > contentWidth) metadata = duration ?? "";
+	if (metadata && visibleWidth(metadata) + minimumSummaryWidth + 2 > contentWidth) metadata = "";
+	const styledMetadata = metadata ? theme?.fg("muted", metadata) ?? metadata : "";
+	const metadataWidth = visibleWidth(styledMetadata);
+	const metadataGap = metadataWidth > 0 ? 2 : 0;
+	const summaryWidth = Math.max(1, contentWidth - metadataWidth - metadataGap);
+	const ellipsis = theme?.fg("muted", "...") ?? "...";
+	const summary = truncateMiddleToWidth(styledLabel + styledDetail, summaryWidth, ellipsis);
+	const padding = metadataWidth > 0
+		? " ".repeat(Math.max(metadataGap, contentWidth - visibleWidth(summary) - metadataWidth))
+		: "";
+	const line = runningMarker + summary + padding + styledMetadata;
+	const lines = instance.customPiGroupSpacing ? ["", line] : [line];
 
 	if (instance.result?.isError) {
 		const error = genericErrorText(instance);

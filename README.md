@@ -4,7 +4,8 @@ Personal [Pi](https://pi.dev) extension for a compact, work-focused terminal UI.
 
 ## Features
 
-- Full, compact, command, and deterministic Friendly tool-call rendering
+- Full, compact, enhanced Command, and deterministic Friendly tool-call rendering
+- Command uses workspace-relative paths, middle truncation, right-aligned timing, and deterministic result facts
 - Friendly labels are generated locally from tool names and arguments
 - No additional model requests, prompt changes, tool schema changes, or display metadata
 - Tool and agent timing
