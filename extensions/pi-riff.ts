@@ -1147,24 +1147,54 @@ function friendlyFileName(value: unknown, cwd: string): string {
 	return path ? basename(path) || path : "文件";
 }
 
-function friendlyBashLabel(command: unknown): string {
-	if (typeof command !== "string" || !command.trim()) return "运行命令";
+function bashActionLabel(command: unknown): string | undefined {
+	if (typeof command !== "string" || !command.trim()) return undefined;
 	const normalized = command.replace(/\s+/g, " ").trim();
+	if (/(?:^|[;&|]\s)(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*lock(?:\s|$)/i.test(normalized)) return "获取协调锁";
+	if (/\btest\b[^;&|]*\s!?\s*-d\b/i.test(normalized)) return "检查目录状态";
+	if (/\bmake\b[^;&|]*\bservice-status\b/i.test(normalized)) return "检查服务状态";
+	if (/\bmake\b[^;&|]*\bservice-(?:start|restart|stop)\b/i.test(normalized)) return "管理服务进程";
+	if (/\bmake\b[^;&|]*\bworktree-(?:create|bootstrap)\b/i.test(normalized)) return "创建工作树";
+	if (/\bmake\b[^;&|]*\bworktree-remove\b/i.test(normalized)) return "删除工作树";
+	if (/\bmake\b[^;&|]*\b(?:dev|web-open)\b/i.test(normalized)) return "启动开发环境";
 	if (/\bgit\b.*\bcommit\b.*\bgit\b.*\bpush\b/i.test(normalized)) return "提交并推送更改";
+	if (/\bgit\b.*\bdiff\b.*\b--check\b|\bdiff\s+--check\b/i.test(normalized)) return "检查代码差异";
+	if (/\bgit\b.*\bdiff\b.*\b(?:--cached|--staged)\b/i.test(normalized)) return "查看暂存差异";
 	if (/\bgit\b.*\bstatus\b/i.test(normalized)) return "检查仓库状态";
 	if (/\bgit\b.*\bdiff\b/i.test(normalized)) return "查看代码差异";
-	if (/\bgit\b.*\blog\b/i.test(normalized)) return "查看提交记录";
+	if (/\bgit\b.*\blog\b|\bgit\b.*\bshow\b/i.test(normalized)) return "查看提交记录";
 	if (/\bgit\b.*\bpush\b/i.test(normalized)) return "推送代码更改";
 	if (/\bgit\b.*\bcommit\b/i.test(normalized)) return "提交代码更改";
-	if (/\b(?:npm|pnpm|yarn|bun)\b[^;&|]*\btest\b|\bnode\s+--test\b|\bpytest\b|\bcargo\s+test\b|\bgo\s+test\b/i.test(normalized)) return "运行项目测试";
-	if (/\b(?:tsc|eslint)\b|\bnode\s+--check\b|\bdiff\s+--check\b/i.test(normalized)) return "检查代码质量";
+	if (/\bgit\b.*\b(?:merge|rebase)\b/i.test(normalized)) return "合并分支";
+	if (/\bgit\b.*\bworktree\b/i.test(normalized)) return "管理工作树";
+	if (/\bpython3?\b/i.test(normalized)) return "运行 Python 脚本";
+	if (/\buv\b[^;&|]*\brun\b/i.test(normalized)) return "运行 Python 环境";
+	if (/\b(?:npm|pnpm|yarn|bun)\b[^;&|]*\btest\b|\bnode\b[^;&|]*--test\b|\bpytest\b|\bcargo\s+test\b|\bgo\s+test\b/i.test(normalized)) return "运行项目测试";
+	if (/\b(?:tsc|eslint)\b|\bnode\b[^;&|]*--check\b|\bdiff\s+--check\b/i.test(normalized)) return "检查代码质量";
 	if (/\b(?:rg|grep)\b/i.test(normalized)) return "搜索代码内容";
+	if (/\bfind\b/i.test(normalized)) return "查找文件";
+	if (/\b(?:jq)\b/i.test(normalized)) return "处理 JSON 数据";
+	if (/\bcurl\b/i.test(normalized)) return "请求网络资源";
 	if (/\b(?:cp|rsync)\b/i.test(normalized)) return "同步文件";
+	if (/\b(?:rm|rmdir)\b/i.test(normalized)) return "删除文件";
+	if (/\bmkdir\b/i.test(normalized)) return "创建目录";
 	if (/\b(?:shasum|sha256sum)\b/i.test(normalized)) return "校验文件一致性";
+	if (/\bplaywright-cli\b/i.test(normalized)) return "操作浏览器";
+	if (/\bgh\b[^;&|]*\bapi\b/i.test(normalized)) return "查询 GitHub 数据";
+	if (/\bgh\b[^;&|]*\brepo\b/i.test(normalized)) return "查看 GitHub 仓库";
+	if (/\bdocker\b[^;&|]*\b(?:compose|run|ps|stop|start)\b/i.test(normalized)) return "管理容器服务";
 	if (/\bpi\b[^;&|]*--list-models\b/i.test(normalized)) return "查询可用模型";
-	const range = firstShellCommandRange(normalized);
-	const executable = range ? basename(normalized.slice(range[0], range[1])) : "命令";
-	return `运行 ${executable}`;
+	return undefined;
+}
+
+function friendlyBashLabel(command: unknown): string {
+	if (typeof command !== "string" || !command.trim()) return "运行命令";
+	return bashActionLabel(command) ?? (() => {
+		const normalized = command.replace(/\s+/g, " ").trim();
+		const range = firstShellCommandRange(normalized);
+		const executable = range ? basename(normalized.slice(range[0], range[1])) : "命令";
+		return `运行 ${executable}`;
+	})();
 }
 
 function friendlyToolSummary(instance: MinimalToolExecutionInstance): MinimalToolSummary {
@@ -1291,12 +1321,21 @@ function renderMinimalTool(instance: MinimalToolExecutionInstance, width: number
 	const styledLabel = `${TOOL_GREEN_BOLD}${toolSummary.label}${ANSI_STYLE_RESET}`;
 	const styledDetail = toolSummary.detail ? ` ${styleMinimalToolDetail(toolSummary, theme)}` : "";
 	const duration = instance.isPartial ? undefined : renderedToolDuration(instance, width);
+	const action = toolState.displayMode === "command" && instance.toolName === "bash"
+		? bashActionLabel(instance.args.command)
+		: "";
 	const fact = toolState.displayMode === "command" ? minimalToolFact(instance) : "";
 	const contentWidth = Math.max(1, width - visibleWidth(runningMarker));
 	const minimumSummaryWidth = Math.min(contentWidth, Math.max(8, visibleWidth(styledLabel)));
-	let metadata = [fact, duration].filter(Boolean).join("  ");
-	if (metadata && visibleWidth(metadata) + minimumSummaryWidth + 2 > contentWidth) metadata = duration ?? "";
-	if (metadata && visibleWidth(metadata) + minimumSummaryWidth + 2 > contentWidth) metadata = "";
+	const fitsMetadata = (parts: Array<string | undefined>): boolean => {
+		const value = parts.filter(Boolean).join("  ");
+		return !value || visibleWidth(value) + minimumSummaryWidth + 2 <= contentWidth;
+	};
+	let metadataParts: Array<string | undefined> = [action, fact, duration];
+	if (!fitsMetadata(metadataParts)) metadataParts = [action, duration];
+	if (!fitsMetadata(metadataParts)) metadataParts = [action];
+	if (!fitsMetadata(metadataParts)) metadataParts = [duration];
+	const metadata = metadataParts.filter(Boolean).join("  ");
 	const styledMetadata = metadata ? theme?.fg("muted", metadata) ?? metadata : "";
 	const metadataWidth = visibleWidth(styledMetadata);
 	const metadataGap = metadataWidth > 0 ? 2 : 0;

@@ -261,7 +261,7 @@ test("Friendly labels are local, deterministic, and all four modes are selectabl
 	await toolStyle.handler("command", ctx);
 	const commandLines = component.render(100).map(stripTerminalControls);
 	assert.equal(commandLines.some((line) => line.includes("git status --short")), true);
-	assert.equal(commandLines.some((line) => line.includes("检查仓库状态")), false);
+	assert.equal(commandLines.some((line) => line.includes("检查仓库状态")), true);
 
 	await toolStyle.handler("full", ctx);
 	component.setExpanded(true);
@@ -314,8 +314,8 @@ test("Command uses relative paths, preserves both ends, and right-aligns facts",
 	const commandLine = command.render(72).map(stripTerminalControls).find((line) => line.includes("git"));
 	assert.ok(commandLine);
 	assert.match(commandLine, /^\$ git -C \. status/);
-	assert.match(commandLine, /\.\.\..*important-target\.md\s+\d+(?:\.\d+)?(?:ms|s)$/);
-	assert.equal(commandLine.length, 72);
+	assert.match(commandLine, /\.\.\..*important-target\.md\s+检查仓库状态\s+\d+(?:\.\d+)?(?:ms|s)$/);
+	assert.ok(commandLine.length <= 72);
 	const styledCommandLine = command.render(100).find((line) => line.includes("status"));
 	assert.match(styledCommandLine, /\x1b\[1;38;2;86;196;112mgit\x1b\[0m/);
 	assert.match(styledCommandLine, /\x1b\[1;38;2;86;196;112mstatus\x1b\[0m/);
@@ -342,22 +342,24 @@ test("Command highlights one semantic token for frequent shell tools", async () 
 	const toolStyle = customPiExtension.commands.get("tool-style");
 	await toolStyle.handler("command", { ui: { notify() {}, setToolsExpanded() {} } });
 	const cases = [
-		{ command: "npm run test", semantic: "test" },
+		{ command: "npm run test", semantic: "test", action: "运行项目测试" },
 		{ command: "npm --prefix . pack", semantic: "pack" },
-		{ command: "node --experimental-strip-types --check src/index.ts", semantic: "--check" },
+		{ command: "node --experimental-strip-types --check src/index.ts", semantic: "--check", action: "检查代码质量" },
 		{ command: "node scripts/check.mjs", semantic: "scripts/check.mjs" },
-		{ command: "playwright-cli -s=pi snapshot", semantic: "snapshot" },
-		{ command: "make service-status", semantic: "service-status" },
-		{ command: "find . -name '*.ts'", semantic: "'*.ts'" },
-		{ command: "jq -r '.name' package.json", semantic: "'.name'" },
-		{ command: "curl -fsSL https://example.com/archive", semantic: "https://example.com/archive" },
-		{ command: "pi --no-extensions --list-models", semantic: "--list-models" },
-		{ command: "gh repo view", semantic: "repo" },
-		{ command: "docker compose ps", semantic: "compose" },
-		{ command: "uv run pytest", semantic: "run" },
-		{ command: "python3 -m pytest", semantic: "pytest" },
-		{ command: "shasum -a 256 package.json", semantic: "package.json" },
-		{ command: "cp source.ts dist/target.ts", semantic: "dist/target.ts" },
+		{ command: "playwright-cli -s=pi snapshot", semantic: "snapshot", action: "操作浏览器" },
+		{ command: "make service-status", semantic: "service-status", action: "检查服务状态" },
+		{ command: "find . -name '*.ts'", semantic: "'*.ts'", action: "查找文件" },
+		{ command: "jq -r '.name' package.json", semantic: "'.name'", action: "处理 JSON 数据" },
+		{ command: "curl -fsSL https://example.com/archive", semantic: "https://example.com/archive", action: "请求网络资源" },
+		{ command: "pi --no-extensions --list-models", semantic: "--list-models", action: "查询可用模型" },
+		{ command: "gh repo view", semantic: "repo", action: "查看 GitHub 仓库" },
+		{ command: "docker compose ps", semantic: "compose", action: "管理容器服务" },
+		{ command: "uv run pytest", semantic: "run", action: "运行 Python 环境" },
+		{ command: "python3 -m pytest", semantic: "pytest", action: "运行 Python 脚本" },
+		{ command: "shasum -a 256 package.json", semantic: "package.json", action: "校验文件一致性" },
+		{ command: "cp source.ts dist/target.ts", semantic: "dist/target.ts", action: "同步文件" },
+		{ command: "lock=.scratch/lock lock -n 'merge'", semantic: "lock", action: "获取协调锁" },
+		{ command: "test ! -d .scratch/lock && echo released", semantic: "test", action: "检查目录状态" },
 	];
 	for (const [index, item] of cases.entries()) {
 		const component = new ToolExecutionComponent("bash", `semantic-${index}`, { command: item.command }, {}, undefined, { requestRender() {} }, repositoryRoot);
@@ -365,6 +367,7 @@ test("Command highlights one semantic token for frequent shell tools", async () 
 		const line = component.render(120).find((candidate) => candidate.includes(item.semantic));
 		const escaped = item.semantic.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 		assert.match(line, new RegExp(`\\x1b\\[1;38;2;86;196;112m${escaped}\\x1b\\[0m`), item.command);
+		if (item.action) assert.match(stripTerminalControls(line), new RegExp(item.action), item.command);
 	}
 	await toolStyle.handler("friendly", { ui: { notify() {}, setToolsExpanded() {} } });
 });
