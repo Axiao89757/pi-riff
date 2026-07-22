@@ -316,6 +316,24 @@ test("Command uses relative paths, preserves both ends, and right-aligns facts",
 	assert.match(commandLine, /^\$ git -C \. status/);
 	assert.match(commandLine, /\.\.\..*important-target\.md\s+\d+(?:\.\d+)?(?:ms|s)$/);
 	assert.equal(commandLine.length, 72);
+	const styledCommandLine = command.render(100).find((line) => line.includes("status"));
+	assert.match(styledCommandLine, /\x1b\[1;38;2;86;196;112mgit\x1b\[0m/);
+	assert.match(styledCommandLine, /\x1b\[1;38;2;86;196;112mstatus\x1b\[0m/);
+
+	const rg = new ToolExecutionComponent(
+		"bash",
+		"command-rg",
+		{ command: 'rg -n -i "GLB|STEP|cad_part" src/' },
+		{},
+		undefined,
+		{ requestRender() {} },
+		repositoryRoot,
+	);
+	rg.updateResult({ content: [], details: undefined, isError: false });
+	const styledRgLine = rg.render(100).find((line) => line.includes("GLB"));
+	assert.match(styledRgLine, /\x1b\[1;38;2;86;196;112mrg\x1b\[0m/);
+	assert.match(styledRgLine, /\x1b\[1;38;2;86;196;112m"GLB\|STEP\|cad_part"\x1b\[0m/);
+	assert.doesNotMatch(styledRgLine, /\x1b\[1;38;2;86;196;112msrc\x1b\[0m/);
 
 	await toolStyle.handler("friendly", { ui: { notify() {}, setToolsExpanded() {} } });
 });

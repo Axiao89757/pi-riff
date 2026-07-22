@@ -787,8 +787,81 @@ function minimalArgumentPreview(args: Record<string, unknown>): string {
 type MinimalToolSummary = {
 	detail: string;
 	emphasizedDetailRange?: [number, number];
+	emphasizedDetailRanges?: Array<[number, number]>;
 	label: string;
 };
+
+function shellTokenRanges(command: string, startAt = 0): Array<[number, number]> {
+	const ranges: Array<[number, number]> = [];
+	let index = startAt;
+	while (index < command.length) {
+		while (/\s/.test(command[index] ?? "")) index += 1;
+		if (index >= command.length || /[;&|]/.test(command[index] ?? "")) break;
+		const start = index;
+		let quote: "'" | '"' | "`" | undefined;
+		while (index < command.length) {
+			const character = command[index];
+			if (character === "\\" && quote !== "'") {
+				index += Math.min(2, command.length - index);
+				continue;
+			}
+			if (quote) {
+				if (character === quote) quote = undefined;
+				index += 1;
+				continue;
+			}
+			if (character === "'" || character === '"' || character === "`") {
+				quote = character;
+				index += 1;
+				continue;
+			}
+			if (/\s/.test(character ?? "") || /[;&|]/.test(character ?? "")) break;
+			index += 1;
+		}
+		if (index > start) ranges.push([start, index]);
+		if (/[;&|]/.test(command[index] ?? "")) break;
+	}
+	return ranges;
+}
+
+function bashSemanticRanges(command: string): Array<[number, number]> {
+	const executableRange = firstShellCommandRange(command);
+	if (!executableRange) return [];
+	const executable = basename(command.slice(executableRange[0], executableRange[1]));
+	const tokens = shellTokenRanges(command, executableRange[0]);
+	const executableIndex = tokens.findIndex(([start, end]) => start === executableRange[0] && end === executableRange[1]);
+	const argumentsTokens = executableIndex < 0 ? [] : tokens.slice(executableIndex + 1);
+	if (executable === "git") {
+		for (let index = 0; index < argumentsTokens.length; index += 1) {
+			const token = command.slice(...argumentsTokens[index]);
+			if (token === "-C" || token === "-c" || token === "--git-dir" || token === "--work-tree" || token === "--config-env") {
+				index += 1;
+				continue;
+			}
+			if (!token.startsWith("-")) return [executableRange, argumentsTokens[index]];
+		}
+		return [executableRange];
+	}
+	if (executable !== "rg") return [executableRange];
+
+	const valueOptions = new Set(["-e", "--regexp", "-g", "--glob", "-f", "--file", "-m", "--max-count", "-A", "-B", "-C", "--context"]);
+	for (let index = 0; index < argumentsTokens.length; index += 1) {
+		const range = argumentsTokens[index];
+		const token = command.slice(...range);
+		if (token === "--") return index + 1 < argumentsTokens.length ? [executableRange, argumentsTokens[index + 1]] : [executableRange];
+		if (token === "-e" || token === "--regexp") {
+			return index + 1 < argumentsTokens.length ? [executableRange, argumentsTokens[index + 1]] : [executableRange];
+		}
+		if (token.startsWith("--regexp=")) return [executableRange, [range[0] + "--regexp=".length, range[1]]];
+		if (valueOptions.has(token)) {
+			index += 1;
+			continue;
+		}
+		if (token.startsWith("-")) continue;
+		return [executableRange, range];
+	}
+	return [executableRange];
+}
 
 function firstShellCommandRange(command: string): [number, number] | undefined {
 	let index = 0;
@@ -838,7 +911,7 @@ function minimalToolSummary(instance: MinimalToolExecutionInstance): MinimalTool
 	switch (instance.toolName) {
 		case "bash": {
 			const detail = compactCommandPaths(args.command, instance.cwd);
-			return { label: "$", detail, emphasizedDetailRange: firstShellCommandRange(detail) };
+			return { label: "$", detail, emphasizedDetailRanges: bashSemanticRanges(detail) };
 		}
 		case "read": {
 			const offset = typeof args.offset === "number" ? args.offset : undefined;
@@ -1013,16 +1086,21 @@ function friendlyToolSummary(instance: MinimalToolExecutionInstance): MinimalToo
 
 function styleMinimalToolDetail(summary: MinimalToolSummary, theme: FooterTheme | undefined): string {
 	if (!summary.detail) return "";
-	const range = summary.emphasizedDetailRange;
-	if (!range) return theme?.fg("toolOutput", summary.detail) ?? summary.detail;
+	const ranges = summary.emphasizedDetailRanges
+		?? (summary.emphasizedDetailRange ? [summary.emphasizedDetailRange] : []);
+	if (ranges.length === 0) return theme?.fg("toolOutput", summary.detail) ?? summary.detail;
 
-	const [start, end] = range;
-	const before = summary.detail.slice(0, start);
-	const command = summary.detail.slice(start, end);
-	const after = summary.detail.slice(end);
 	const styleNormal = (text: string) => theme?.fg("toolOutput", text) ?? text;
-	const styledCommand = `${TOOL_GREEN_BOLD}${command}${ANSI_STYLE_RESET}`;
-	return styleNormal(before) + styledCommand + styleNormal(after);
+	const styledParts: string[] = [];
+	let cursor = 0;
+	for (const [start, end] of ranges) {
+		if (start < cursor || end <= start) continue;
+		styledParts.push(styleNormal(summary.detail.slice(cursor, start)));
+		styledParts.push(`${TOOL_GREEN_BOLD}${summary.detail.slice(start, end)}${ANSI_STYLE_RESET}`);
+		cursor = end;
+	}
+	styledParts.push(styleNormal(summary.detail.slice(cursor)));
+	return styledParts.join("");
 }
 
 function trackMinimalToolAnimation(instance: MinimalToolExecutionInstance): void {
