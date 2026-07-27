@@ -567,14 +567,16 @@ test("user messages reserve one blank row after the timestamp", () => {
 	assert.equal(stripTerminalControls(lines.at(-2)).trim(), "2026.7.20 10:34");
 });
 
-test("user message bubbles can use ninety percent of the available width", () => {
+test("user messages render without bubbles at the full available width", () => {
 	const message = new UserMessageComponent("x".repeat(200));
 	message.customPiTimestamp = new Date(2026, 6, 20, 10, 34).getTime();
 
 	const lines = message.render(100);
-	const timestampLine = stripTerminalControls(lines.at(-2));
-
-	assert.equal(timestampLine.indexOf("2026.7.20 10:34"), 10);
+	const plainLines = lines.map(stripTerminalControls);
+	assert.equal(plainLines[0], "x".repeat(100));
+	assert.equal(plainLines[1], "x".repeat(100));
+	assert.equal(plainLines.at(-2), "2026.7.20 10:34");
+	assert.equal(lines.some((line) => /\x1b\[[0-9;]*48;/.test(line)), false);
 });
 
 test("setExpanded discards image records retained from the pre-thumbnail patch", () => {

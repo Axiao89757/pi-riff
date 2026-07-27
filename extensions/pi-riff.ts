@@ -23,7 +23,6 @@ import {
 	Box,
 	type Component,
 	Container,
-	getCellDimensions,
 	getImageDimensions,
 	Image,
 	type ImageDimensions,
@@ -1587,24 +1586,6 @@ function userMessageTimeState(): UserMessageTimeState {
 
 const USER_IMAGE_MARKER = /\[Image attached:\s*([^\]\r\n]+)\]\s*/gi;
 
-function userImageCellSize(
-	dimensions: ImageDimensions,
-	maxWidth: number,
-	maxHeight: number,
-	cell: ReturnType<typeof getCellDimensions>,
-): { columns: number; rows: number } {
-	const imageWidth = Math.max(1, dimensions.widthPx);
-	const imageHeight = Math.max(1, dimensions.heightPx);
-	const scale = Math.min(
-		(maxWidth * cell.widthPx) / imageWidth,
-		(maxHeight * cell.heightPx) / imageHeight,
-	);
-	return {
-		columns: Math.max(1, Math.min(maxWidth, Math.ceil((imageWidth * scale) / cell.widthPx))),
-		rows: Math.max(1, Math.min(maxHeight, Math.ceil((imageHeight * scale) / cell.heightPx))),
-	};
-}
-
 function bindUserMessageImages(instance: UserMessageInstance, message: AssistantMessage): void {
 	const imageBlocks = message.content.filter((block) =>
 		block.type === "image" && typeof block.data === "string" && typeof block.mimeType === "string",
@@ -1680,8 +1661,8 @@ function setUserMessageImageExpansion(instance: UserMessageInstance, expanded: b
 	}
 }
 
-function renderRightAlignedUserMessage(instance: UserMessageInstance, width: number): string[] | undefined {
-	if (width < 4) return undefined;
+function renderFullWidthUserMessage(instance: UserMessageInstance, width: number): string[] | undefined {
+	if (width < 1) return undefined;
 	const state = userMessageTimeState();
 	if ((!instance.customPiImages || instance.customPiImageRevision !== state.layoutRevision)
 		&& instance.customPiTimestamp !== undefined) {
@@ -1692,52 +1673,24 @@ function renderRightAlignedUserMessage(instance: UserMessageInstance, width: num
 	const messageContent = instance.children[0]?.children[0];
 	if (!messageContent) return undefined;
 
-	const timestamp = state.formatTimestamp?.(instance.customPiTimestamp);
-	const maxBubbleWidth = Math.max(3, Math.min(width, Math.floor(width * 0.9)));
-	const maxContentWidth = Math.max(1, maxBubbleWidth - 2);
-	const probeLines = messageContent.render(maxContentWidth);
-	const contentWidth = Math.max(0, ...probeLines.map((line) => visibleWidth(line.replace(ANSI_SGR, "").trimEnd())));
-	const hasText = contentWidth > 0;
+	const textLines = messageContent.render(width);
+	const hasText = textLines.some((line) => visibleWidth(line.replace(ANSI_SGR, "").trimEnd()) > 0);
 	const images = instance.customPiImages ?? [];
 	if (!hasText && images.length === 0) return undefined;
 
-	const cellDimensions = getCellDimensions();
 	const imageExpanded = state.imagesExpanded;
-	const maxImageWidth = imageExpanded
-		? Math.max(1, width - 2)
-		: Math.max(1, Math.min(60, maxBubbleWidth));
-	const maxImageHeight = imageExpanded ? 40 : 16;
-	const imageLayouts = images.map((image) => ({
-		...image,
-		size: userImageCellSize(image.dimensions, maxImageWidth, maxImageHeight, cellDimensions),
-	}));
+	const maxImageWidth = imageExpanded ? width : Math.max(1, Math.min(60, width));
 	const lines: string[] = [];
-	for (const image of imageLayouts) {
+	for (const image of images) {
 		const component = imageExpanded ? image.expanded : image.thumbnail;
-		for (const line of component.render(Math.min(width, maxImageWidth + 2))) {
-			const renderedWidth = visibleWidth(line) || image.size.columns;
-			lines.push(" ".repeat(Math.max(0, width - Math.min(width, renderedWidth))) + line);
-		}
+		lines.push(...component.render(maxImageWidth));
 	}
+	if (hasText) lines.push(...textLines);
 
-	const timestampWidth = timestamp ? visibleWidth(timestamp) : 0;
-	const bubbleWidth = hasText ? Math.min(maxBubbleWidth, Math.max(3, contentWidth + 2, timestampWidth)) : 0;
-	const displayTimestamp = timestamp ? truncateToWidth(timestamp, hasText ? bubbleWidth : width, "...", false) : undefined;
-	let timestampLeftPadding = "";
-	if (hasText) {
-		const leftPadding = " ".repeat(Math.max(0, width - bubbleWidth));
-		const theme = state.getTheme?.();
-		const bubble = new Box(1, 1, (text) => theme?.bg("userMessageBg", text) ?? text);
-		bubble.addChild(messageContent);
-		lines.push(...bubble.render(bubbleWidth).map((line) => leftPadding + line));
-		timestampLeftPadding = leftPadding;
-	} else {
-		const imageWidth = Math.max(0, ...imageLayouts.map((image) => image.size.columns));
-		timestampLeftPadding = " ".repeat(Math.max(0, width - Math.max(imageWidth, timestampWidth)));
-	}
-	if (displayTimestamp) {
-		const styledTimestamp = state.getTheme?.().fg("dim", displayTimestamp) ?? displayTimestamp;
-		lines.push(timestampLeftPadding + styledTimestamp);
+	const timestamp = state.formatTimestamp?.(instance.customPiTimestamp);
+	if (timestamp) {
+		const displayTimestamp = truncateToWidth(timestamp, width, "...", false);
+		lines.push(state.getTheme?.().fg("dim", displayTimestamp) ?? displayTimestamp);
 	}
 	if (lines.length > 0) {
 		lines[0] = OSC133_ZONE_START + lines[0];
@@ -1784,13 +1737,13 @@ function installUserMessageTimestamps(): void {
 	state.layoutRevision = Number.isFinite(state.layoutRevision) ? state.layoutRevision + 1 : 1;
 	state.bindImages = bindUserMessageImages;
 	state.formatTimestamp = formatUserTimestamp;
-	state.renderRightBubble = renderRightAlignedUserMessage;
+	state.renderRightBubble = renderFullWidthUserMessage;
 	state.setImageExpansion = setUserMessageImageExpansion;
 	state.applyCompactLayout = (instance) => {
 		const contentBox = instance.children[0];
 		if (!contentBox) return;
-		contentBox.paddingX = Math.max(1, contentBox.paddingX);
-		contentBox.paddingY = 1;
+		contentBox.paddingX = 0;
+		contentBox.paddingY = 0;
 		while (contentBox.children.length > 1) {
 			const extraChild = contentBox.children.at(-1);
 			if (!extraChild) break;

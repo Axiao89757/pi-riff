@@ -9,7 +9,7 @@ Personal [Pi](https://pi.dev) extension for a compact, work-focused terminal UI.
 - Friendly labels are generated locally from tool names and arguments
 - No additional model requests, prompt changes, tool schema changes, or display metadata
 - Tool and agent timing
-- Right-aligned user messages with local timestamps
+- Full-width, bubble-free user messages with local timestamps
 - Clipboard image attachment, thumbnails, and expanded image display
 - Compact editor rail, footer identity, model statistics, and context title
 - Persistent context title mirrored to the Pi session name
