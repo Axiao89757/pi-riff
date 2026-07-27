@@ -35,7 +35,7 @@ import {
 import { Type } from "typebox";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 // Global pi-riff behavior: compact tools, focused footer data, context title, and clipboard images.
 const MAX_CALL_LENGTH = 120;
@@ -144,17 +144,23 @@ type MinimalToolDisplayState = {
 	animationTimer?: ReturnType<typeof setInterval>;
 	// Retained for wrappers installed by pre-Friendly /reload versions.
 	collapsedStyle: "minimal" | "compact";
+	currentAssistantAfterTools: boolean;
 	displayMode: ToolDisplayMode;
 	groupGeneration: number;
 	groupsAfterBody: Set<number>;
+	pathContextAbbreviations: number;
+	pathContextDirectory?: string;
+	pathContextGroup: number;
 	renderMinimal?: (instance: MinimalToolExecutionInstance, width: number) => string[];
 	runningTools: Set<MinimalToolExecutionInstance>;
 	spacedGroups: Set<number>;
+	toolBatchActive: boolean;
 };
 
 type MinimalToolExecutionInstance = GenericToolExecutionInstance & {
 	args: Record<string, unknown>;
 	callRendererComponent?: Component;
+	customPiCommandPath?: string;
 	customPiGroupSpacing?: boolean;
 	customPiToolGroup?: number;
 	cwd: string;
@@ -174,12 +180,25 @@ type ContainerPrototype = {
 	addChild(component: Component): void;
 	customPiTimingEntrySpacingPatched?: boolean;
 	customPiToolGroupBindingPatched?: boolean;
+	customPiToolGroupBindingV2Patched?: boolean;
+	customPiToolPathContextPatched?: boolean;
 	render(width: number): string[];
 };
 
+type ThinkingTiming = {
+	durationMs?: number;
+	startedAt?: number;
+};
+
 type AssistantPresentationState = {
-	applyContentSpacing?: (instance: AssistantMessageInstance, message: AssistantMessage) => void;
+	applyContentSpacing?: (
+		instance: AssistantMessageInstance,
+		message: AssistantMessage,
+		timingMessage?: AssistantMessage,
+	) => void;
 	styleAssistantLines?: (lines: string[]) => string[];
+	thinkingTimings?: WeakMap<object, ThinkingTiming>;
+	thinkingTimingsByTimestamp?: Map<number | string, ThinkingTiming>;
 	transformAssistantMessage?: (message: AssistantMessage) => AssistantMessage;
 	transformMarkdownLines?: (lines: string[], theme: FooterTheme | undefined) => string[];
 };
@@ -188,6 +207,7 @@ type AssistantMessageInstance = {
 	contentContainer: {
 		children: Component[];
 	};
+	customPiAfterToolBatch?: boolean;
 };
 
 type AssistantMessagePrototype = {
@@ -268,6 +288,7 @@ type InteractiveModeInstance = {
 type InteractiveModePrototype = {
 	customPiMarkdownThemePatched?: boolean;
 	customPiToolGroupingPatched?: boolean;
+	customPiToolGroupingV2Patched?: boolean;
 	customPiToolModeCyclingPatched?: boolean;
 	customPiUserImagesPatched?: boolean;
 	customPiUserImagesV2Patched?: boolean;
@@ -615,29 +636,78 @@ function compactThinkingForDisplay(message: AssistantMessage): AssistantMessage 
 	return changed ? { ...message, content } : message;
 }
 
-function assistantContentRuns(message: AssistantMessage): Array<"body" | "thinking"> {
-	const runs: Array<"body" | "thinking"> = [];
+type AssistantContentRun = {
+	kind: "body" | "thinking";
+	thinking?: string;
+};
+
+function assistantContentRuns(message: AssistantMessage): AssistantContentRun[] {
+	const runs: AssistantContentRun[] = [];
 	for (const block of message.content) {
 		if (block.type === "text" && block.text?.trim()) {
-			runs.push("body");
-		} else if (block.type === "thinking" && block.thinking?.trim() && runs.at(-1) !== "thinking") {
-			runs.push("thinking");
+			runs.push({ kind: "body" });
+		} else if (block.type === "thinking" && block.thinking?.trim()) {
+			const previous = runs.at(-1);
+			if (previous?.kind === "thinking") previous.thinking = `${previous.thinking ?? ""}\n${block.thinking.trim()}`;
+			else runs.push({ kind: "thinking", thinking: block.thinking.trim() });
 		}
 	}
 	return runs;
 }
 
-class SingleLineThinkingComponent implements Component {
-	constructor(private readonly content: Component) {}
+function thinkingTiming(message: AssistantMessage, completed: boolean): ThinkingTiming {
+	const state = assistantPresentationState();
+	state.thinkingTimings ??= new WeakMap<object, ThinkingTiming>();
+	state.thinkingTimingsByTimestamp ??= new Map<number | string, ThinkingTiming>();
+	const timestamp = message.timestamp;
+	let timing = timestamp === undefined
+		? state.thinkingTimings.get(message as object)
+		: state.thinkingTimingsByTimestamp.get(timestamp);
+	if (!timing) {
+		timing = completed ? {} : { startedAt: performance.now() };
+		if (timestamp === undefined) state.thinkingTimings.set(message as object, timing);
+		else {
+			state.thinkingTimingsByTimestamp.set(timestamp, timing);
+			if (state.thinkingTimingsByTimestamp.size > 1000) {
+				const oldest = state.thinkingTimingsByTimestamp.keys().next().value;
+				if (oldest !== undefined) state.thinkingTimingsByTimestamp.delete(oldest);
+			}
+		}
+	} else if (completed && timing.durationMs === undefined && timing.startedAt !== undefined) {
+		timing.durationMs = Math.max(0, performance.now() - timing.startedAt);
+	}
+	return timing;
+}
+
+class CollapsibleThinkingComponent implements Component {
+	constructor(
+		private readonly content: Component,
+		private readonly thinking: string,
+		private readonly completed: boolean,
+		private readonly durationMs?: number,
+	) {}
 
 	render(width: number): string[] {
-		const lines = this.content.render(Math.max(width, 4096));
+		if (minimalToolDisplayState().displayMode === "full") return this.content.render(width);
+
+		const fullLines = this.content.render(Math.max(width, 4096));
+		const visibleLines = fullLines.filter((line) => visibleWidth(line.replace(ANSI_SGR, "").trim()) > 0);
+		if (!this.completed) {
+			const latest = visibleLines.at(-1);
+			if (!latest) return [];
+			const theme = footerTimerState().getTheme?.();
+			const ellipsis = theme?.italic(theme.fg("thinkingText", "...")) ?? "...";
+			const withoutTerminalPadding = latest.replace(/[\t ]+((?:\x1b\[[0-9;]*m)*)$/, "$1");
+			return [truncateToWidth(withoutTerminalPadding, width, ellipsis, true)];
+		}
+
+		const steps = this.thinking.split("\n").filter((line) => line.trim()).length;
+		const duration = this.durationMs === undefined ? "" : ` · ${formatDuration(this.durationMs)}`;
+		const label = `Thinking · ${steps} ${steps === 1 ? "step" : "steps"}${duration}`;
 		const theme = footerTimerState().getTheme?.();
-		const ellipsis = theme?.italic(theme.fg("thinkingText", "...")) ?? "...";
-		return lines.map((line) => {
-			const withoutTerminalPadding = line.replace(/[\t ]+((?:\x1b\[[0-9;]*m)*)$/, "$1");
-			return truncateToWidth(withoutTerminalPadding, width, ellipsis, true);
-		});
+		const styled = theme?.italic(theme.fg("thinkingText", label)) ?? label;
+		const leadingPadding = visibleLines[0]?.replace(ANSI_SGR, "").match(/^\s*/)?.[0] ?? "";
+		return [truncateToWidth(leadingPadding + styled, width, "...", true)];
 	}
 
 	invalidate(): void {
@@ -645,20 +715,35 @@ class SingleLineThinkingComponent implements Component {
 	}
 }
 
-function applyAssistantContentSpacing(instance: AssistantMessageInstance, message: AssistantMessage): void {
+function applyAssistantContentSpacing(
+	instance: AssistantMessageInstance,
+	message: AssistantMessage,
+	timingMessage: AssistantMessage = message,
+): void {
 	const runs = assistantContentRuns(message);
 	const children = instance.contentContainer.children;
-	if (runs[0] === "thinking" && children[0] instanceof Spacer) children.shift();
+	if (minimalToolDisplayState().currentAssistantAfterTools) instance.customPiAfterToolBatch = true;
+	if (runs[0]?.kind === "thinking" && !instance.customPiAfterToolBatch && children[0] instanceof Spacer) {
+		children.shift();
+	}
 
+	const completed = typeof timingMessage.stopReason === "string" && Boolean(timingMessage.stopReason);
+	const timing = thinkingTiming(timingMessage, completed);
 	let childIndex = 0;
 	for (let runIndex = 0; runIndex < runs.length; runIndex++) {
 		while (children[childIndex] instanceof Spacer) childIndex += 1;
 		if (!children[childIndex]) break;
-		if (runs[runIndex] === "thinking" && !(children[childIndex] instanceof SingleLineThinkingComponent)) {
-			children[childIndex] = new SingleLineThinkingComponent(children[childIndex]);
+		const run = runs[runIndex];
+		if (run.kind === "thinking" && !(children[childIndex] instanceof CollapsibleThinkingComponent)) {
+			children[childIndex] = new CollapsibleThinkingComponent(
+				children[childIndex],
+				run.thinking ?? "",
+				completed,
+				timing.durationMs,
+			);
 		}
 		childIndex += 1;
-		if (runs[runIndex] === "body" && runs[runIndex + 1] === "thinking"
+		if (run.kind === "body" && runs[runIndex + 1]?.kind === "thinking"
 			&& !(children[childIndex] instanceof Spacer)) {
 			children.splice(childIndex, 0, new Spacer(1));
 		}
@@ -691,7 +776,7 @@ function installAssistantPresentation(): void {
 		assistantPrototype.updateContent = function (message) {
 			updateSpacing.call(this, message);
 			const transformed = assistantPresentationState().transformAssistantMessage?.(message) ?? message;
-			assistantPresentationState().applyContentSpacing?.(this, transformed);
+			assistantPresentationState().applyContentSpacing?.(this, transformed, message);
 		};
 		Object.defineProperty(assistantPrototype, "customPiContentSpacingV2Patched", {
 			value: true,
@@ -707,18 +792,26 @@ function minimalToolDisplayState(): MinimalToolDisplayState {
 	};
 	const state = globals[MINIMAL_TOOL_STATE] ??= {
 		collapsedStyle: "minimal",
+		currentAssistantAfterTools: false,
 		displayMode: "command",
 		groupGeneration: 0,
 		groupsAfterBody: new Set<number>(),
+		pathContextAbbreviations: 0,
+		pathContextGroup: 0,
 		runningTools: new Set<MinimalToolExecutionInstance>(),
 		spacedGroups: new Set<number>(),
+		toolBatchActive: false,
 	};
 	state.displayMode ??= "command";
 	state.collapsedStyle = state.displayMode === "compact" ? "compact" : "minimal";
+	state.currentAssistantAfterTools ??= false;
 	state.groupGeneration ??= 0;
 	state.groupsAfterBody ??= new Set<number>();
+	state.pathContextAbbreviations ??= 0;
+	state.pathContextGroup ??= state.groupGeneration;
 	state.runningTools ??= new Set<MinimalToolExecutionInstance>();
 	state.spacedGroups ??= new Set<number>();
+	state.toolBatchActive ??= false;
 	return state;
 }
 
@@ -728,20 +821,26 @@ function setToolDisplayMode(mode: ToolDisplayMode): void {
 	state.collapsedStyle = mode === "compact" ? "compact" : "minimal";
 }
 
-function assistantHasVisibleBody(message: Pick<AssistantMessage, "content">): boolean {
+function assistantHasVisibleContent(message: Pick<AssistantMessage, "content">): boolean {
 	return Array.isArray(message.content)
-		&& message.content.some((block) => block.type === "text" && Boolean(block.text?.trim()));
+		&& message.content.some((block) =>
+			(block.type === "text" && Boolean(block.text?.trim()))
+			|| (block.type === "thinking" && Boolean(block.thinking?.trim()))
+		);
 }
 
 function beginMinimalToolGroup(message?: Pick<AssistantMessage, "content">): void {
 	const state = minimalToolDisplayState();
 	state.groupGeneration += 1;
-	if (message && assistantHasVisibleBody(message)) state.groupsAfterBody.add(state.groupGeneration);
+	state.pathContextAbbreviations = 0;
+	state.pathContextDirectory = undefined;
+	state.pathContextGroup = state.groupGeneration;
+	if (message && assistantHasVisibleContent(message)) state.groupsAfterBody.add(state.groupGeneration);
 }
 
 function markMinimalToolGroupAfterBody(message: Pick<AssistantMessage, "content">): void {
 	const state = minimalToolDisplayState();
-	if (assistantHasVisibleBody(message)) state.groupsAfterBody.add(state.groupGeneration);
+	if (assistantHasVisibleContent(message)) state.groupsAfterBody.add(state.groupGeneration);
 }
 
 function minimalPath(value: unknown, cwd: string): string {
@@ -751,6 +850,66 @@ function minimalPath(value: unknown, cwd: string): string {
 	const isInsideCwd = relativeToCwd === ""
 		|| (relativeToCwd !== ".." && !relativeToCwd.startsWith(`..${sep}`) && !isAbsolute(relativeToCwd));
 	return isInsideCwd ? relativeToCwd || "." : formatFooterCwd(value);
+}
+
+function bindMinimalToolPathContext(instance: MinimalToolExecutionInstance): void {
+	if (instance.customPiCommandPath !== undefined
+		|| (instance.toolName !== "read" && instance.toolName !== "edit" && instance.toolName !== "write")) return;
+
+	const path = minimalPath(instance.args?.path ?? instance.args?.file_path, instance.cwd);
+	if (!path) return;
+	const state = minimalToolDisplayState();
+	const group = instance.customPiToolGroup ?? state.groupGeneration;
+	if (state.pathContextGroup !== group) {
+		state.pathContextAbbreviations = 0;
+		state.pathContextDirectory = undefined;
+		state.pathContextGroup = group;
+	}
+
+	const directory = dirname(path);
+	const canReuse = directory === state.pathContextDirectory && state.pathContextAbbreviations < 5;
+	instance.customPiCommandPath = canReuse ? `.${sep}${basename(path)}` : path;
+	if (canReuse) state.pathContextAbbreviations += 1;
+	else {
+		state.pathContextAbbreviations = 0;
+		state.pathContextDirectory = directory;
+	}
+}
+
+function refreshMinimalToolPathContexts(components: Component[]): void {
+	let abbreviations = 0;
+	let directory: string | undefined;
+	let group: number | undefined;
+	for (const component of components) {
+		if (!(component instanceof ToolExecutionComponent)) continue;
+		const tool = component as unknown as MinimalToolExecutionInstance;
+		if (tool.customPiToolGroup !== group) {
+			abbreviations = 0;
+			directory = undefined;
+			group = tool.customPiToolGroup;
+		}
+		tool.customPiCommandPath = undefined;
+		if (tool.toolName !== "read" && tool.toolName !== "edit" && tool.toolName !== "write") {
+			abbreviations = 0;
+			directory = undefined;
+			continue;
+		}
+
+		const path = minimalPath(tool.args?.path ?? tool.args?.file_path, tool.cwd);
+		if (!path) {
+			abbreviations = 0;
+			directory = undefined;
+			continue;
+		}
+		const parent = dirname(path);
+		const canReuse = parent === directory && abbreviations < 5;
+		tool.customPiCommandPath = canReuse ? `.${sep}${basename(path)}` : path;
+		if (canReuse) abbreviations += 1;
+		else {
+			abbreviations = 0;
+			directory = parent;
+		}
+	}
 }
 
 function stripPassiveShellPrefixes(command: string): string {
@@ -1071,7 +1230,7 @@ function emphasizedPathRange(detail: string, path: string): [number, number] | u
 
 function minimalToolSummary(instance: MinimalToolExecutionInstance): MinimalToolSummary {
 	const args = instance.args ?? {};
-	const path = minimalPath(args.path ?? args.file_path, instance.cwd);
+	const path = instance.customPiCommandPath ?? minimalPath(args.path ?? args.file_path, instance.cwd);
 	switch (instance.toolName) {
 		case "bash": {
 			const detail = compactCommandPaths(args.command, instance.cwd);
@@ -1397,19 +1556,79 @@ function installMinimalToolGrouping(): void {
 			writable: false,
 		});
 	}
+	if (!containerPrototype.customPiToolGroupBindingV2Patched) {
+		const addChildWithGroup = containerPrototype.addChild;
+		containerPrototype.addChild = function (component) {
+			if (component instanceof ToolExecutionComponent) {
+				const tool = component as unknown as MinimalToolExecutionInstance;
+				const state = minimalToolDisplayState();
+				tool.customPiToolGroup ??= state.groupGeneration;
+				bindMinimalToolPathContext(tool);
+				state.toolBatchActive = true;
+			}
+			addChildWithGroup.call(this, component);
+		};
+		Object.defineProperty(containerPrototype, "customPiToolGroupBindingV2Patched", {
+			value: true,
+			configurable: false,
+			writable: false,
+		});
+	}
+	if (!containerPrototype.customPiToolPathContextPatched) {
+		const renderWithCurrentPaths = containerPrototype.render;
+		containerPrototype.render = function (width) {
+			const instance = this as unknown as { children?: Component[] };
+			refreshMinimalToolPathContexts(instance.children ?? []);
+			return renderWithCurrentPaths.call(this, width);
+		};
+		Object.defineProperty(containerPrototype, "customPiToolPathContextPatched", {
+			value: true,
+			configurable: false,
+			writable: false,
+		});
+	}
 
 	const prototype = InteractiveMode.prototype as unknown as InteractiveModePrototype;
-	if (prototype.customPiToolGroupingPatched) return;
-	const addMessageToChat = prototype.addMessageToChat;
-	prototype.addMessageToChat = function (message, options) {
-		if (message.role === "assistant") beginMinimalToolGroup({ content: message.content ?? [] });
-		addMessageToChat.call(this, message, options);
-	};
-	Object.defineProperty(prototype, "customPiToolGroupingPatched", {
-		value: true,
-		configurable: false,
-		writable: false,
-	});
+	if (!prototype.customPiToolGroupingPatched) {
+		const addMessageToChat = prototype.addMessageToChat;
+		prototype.addMessageToChat = function (message, options) {
+			if (message.role === "assistant") beginMinimalToolGroup({ content: message.content ?? [] });
+			addMessageToChat.call(this, message, options);
+		};
+		Object.defineProperty(prototype, "customPiToolGroupingPatched", {
+			value: true,
+			configurable: false,
+			writable: false,
+		});
+	}
+	if (!prototype.customPiToolGroupingV2Patched) {
+		const addGroupedMessage = prototype.addMessageToChat;
+		prototype.addMessageToChat = function (message, options) {
+			const state = minimalToolDisplayState();
+			if (message.role !== "assistant") {
+				if (message.role === "user") state.toolBatchActive = false;
+				addGroupedMessage.call(this, message, options);
+				return;
+			}
+
+			state.currentAssistantAfterTools = state.toolBatchActive;
+			state.toolBatchActive = false;
+			state.pathContextAbbreviations = 0;
+			state.pathContextDirectory = undefined;
+			state.pathContextGroup = state.groupGeneration + 1;
+			try {
+				addGroupedMessage.call(this, message, options);
+				markMinimalToolGroupAfterBody({ content: message.content ?? [] });
+			} finally {
+				state.currentAssistantAfterTools = false;
+			}
+		};
+		Object.defineProperty(prototype, "customPiToolGroupingV2Patched", {
+			value: true,
+			configurable: false,
+			writable: false,
+		});
+	}
 }
 
 function compactTimingEntrySpacing(component: Component): void {
@@ -2662,18 +2881,32 @@ export default function (pi: ExtensionAPI) {
 
 
 	pi.on("message_start", (event) => {
-		if (event.message.role === "assistant") beginMinimalToolGroup(event.message as AssistantMessage);
+		const state = minimalToolDisplayState();
+		if (event.message.role === "user") {
+			state.toolBatchActive = false;
+			return;
+		}
+		if (event.message.role !== "assistant") return;
+		state.currentAssistantAfterTools = state.toolBatchActive;
+		state.toolBatchActive = false;
+		beginMinimalToolGroup(event.message as AssistantMessage);
 	});
 
 	pi.on("message_update", (event) => {
 		const message = event.message as AssistantMessage;
 		cleanThinkingBlocks(message);
-		if (message.role === "assistant") markMinimalToolGroupAfterBody(message);
+		if (message.role === "assistant") {
+			minimalToolDisplayState().currentAssistantAfterTools = false;
+			markMinimalToolGroupAfterBody(message);
+		}
 	});
 
 	pi.on("message_end", (event) => {
 		const message = event.message as AssistantMessage;
-		if (message.role === "assistant") markMinimalToolGroupAfterBody(message);
+		if (message.role === "assistant") {
+			minimalToolDisplayState().currentAssistantAfterTools = false;
+			markMinimalToolGroupAfterBody(message);
+		}
 		if (!cleanThinkingBlocks(message)) return;
 		return { message: event.message };
 	});

@@ -33,8 +33,10 @@ assert.ok(existsSync(join(piRoot, loaderRelativePath)), `Cannot locate Pi packag
 const loaderUrl = pathToFileURL(join(piRoot, loaderRelativePath));
 const indexUrl = pathToFileURL(join(piRoot, "dist", "index.js"));
 const themeUrl = pathToFileURL(join(piRoot, "dist", "modes", "interactive", "theme", "theme.js"));
+const tuiUrl = pathToFileURL(join(piRoot, "node_modules", "@earendil-works", "pi-tui", "dist", "index.js"));
 const { loadExtensions } = await import(loaderUrl.href);
-const { FooterComponent, InteractiveMode, SkillInvocationMessageComponent, ToolExecutionComponent, UserMessageComponent, parseSkillBlock } = await import(indexUrl.href);
+const { AssistantMessageComponent, FooterComponent, InteractiveMode, SkillInvocationMessageComponent, ToolExecutionComponent, UserMessageComponent, parseSkillBlock } = await import(indexUrl.href);
+const { Container } = await import(tuiUrl.href);
 const { initTheme, theme: activeTheme } = await import(themeUrl.href);
 initTheme("dark");
 
@@ -63,6 +65,10 @@ Object.defineProperty(userMessagePrototype, "customPiImageExpansionPatched", {
 
 const interactivePrototype = InteractiveMode.prototype;
 interactivePrototype.addMessageToChat = function (message) {
+	if (message.role === "assistant") {
+		this.chatContainer.children.push(new AssistantMessageComponent(message));
+		return;
+	}
 	if (message.role !== "user") return;
 	legacyBindings++;
 	const text = Array.isArray(message.content)
@@ -82,6 +88,38 @@ interactivePrototype.addMessageToChat = function (message) {
 	this.chatContainer.children.push(component);
 };
 Object.defineProperty(interactivePrototype, "customPiUserImagesPatched", {
+	value: true,
+	configurable: false,
+	writable: false,
+});
+
+const retainedGroupedMessage = interactivePrototype.addMessageToChat;
+interactivePrototype.addMessageToChat = function (message, options) {
+	const state = globalThis[Symbol.for("pi.custom-pi.minimal-tool-state")];
+	if (message.role === "assistant" && state) {
+		state.groupGeneration += 1;
+		if (message.content?.some((block) => block.type === "text" && block.text?.trim())) {
+			state.groupsAfterBody.add(state.groupGeneration);
+		}
+	}
+	retainedGroupedMessage.call(this, message, options);
+};
+Object.defineProperty(interactivePrototype, "customPiToolGroupingPatched", {
+	value: true,
+	configurable: false,
+	writable: false,
+});
+
+const containerPrototype = Container.prototype;
+const retainedToolBinding = containerPrototype.addChild;
+containerPrototype.addChild = function (component) {
+	if (component instanceof ToolExecutionComponent) {
+		const state = globalThis[Symbol.for("pi.custom-pi.minimal-tool-state")];
+		if (state) component.customPiToolGroup ??= state.groupGeneration;
+	}
+	retainedToolBinding.call(this, component);
+};
+Object.defineProperty(containerPrototype, "customPiToolGroupBindingPatched", {
 	value: true,
 	configurable: false,
 	writable: false,
@@ -285,6 +323,119 @@ test("Friendly labels are local, deterministic, and all four modes are selectabl
 		"Tool display mode: full",
 	]);
 	await toolStyle.handler("friendly", ctx);
+});
+
+test("Thinking shows latest progress, collapses on completion, and expands in Full", async () => {
+	const toolStyle = customPiExtension.commands.get("tool-style");
+	await toolStyle.handler("command", { ui: { notify() {}, setToolsExpanded() {} } });
+	const message = {
+		role: "assistant",
+		timestamp: Date.now(),
+		content: [{ type: "thinking", thinking: "Planning files\nInspecting dependencies\nRunning checks" }],
+	};
+	const component = new AssistantMessageComponent(message);
+	let rendered = component.render(100).map(stripTerminalControls).join("\n");
+	assert.doesNotMatch(rendered, /Planning files|Inspecting dependencies/);
+	assert.match(rendered, /Running checks/);
+
+	const completedMessage = { ...message, stopReason: "stop" };
+	component.updateContent(completedMessage);
+	rendered = component.render(100).map(stripTerminalControls).join("\n");
+	assert.match(rendered, /Thinking · 3 steps · \d+\.\d+s/);
+	assert.doesNotMatch(rendered, /Planning files|Running checks/);
+
+	await toolStyle.handler("full", { ui: { notify() {}, setToolsExpanded() {} } });
+	component.updateContent(completedMessage);
+	rendered = component.render(100).map(stripTerminalControls).join("\n");
+	assert.match(rendered, /Planning files/);
+	assert.match(rendered, /Running checks/);
+	assert.doesNotMatch(rendered, /Thinking · 3 steps/);
+	await toolStyle.handler("command", { ui: { notify() {}, setToolsExpanded() {} } });
+});
+
+test("Command groups tool batches and reuses unchanged file directories", async () => {
+	assert.equal(interactivePrototype.customPiToolGroupingV2Patched, true);
+	assert.equal(containerPrototype.customPiToolGroupBindingV2Patched, true);
+	const toolStyle = customPiExtension.commands.get("tool-style");
+	await toolStyle.handler("command", { ui: { notify() {}, setToolsExpanded() {} } });
+	const chat = { chatContainer: { children: [] } };
+	interactivePrototype.addMessageToChat.call(chat, {
+		role: "assistant",
+		content: [{ type: "thinking", thinking: "Inspecting files" }],
+	});
+
+	const parent = new Container();
+	const makeTool = (toolName, id, path) => {
+		const component = new ToolExecutionComponent(
+			toolName,
+			id,
+			{ path, ...(toolName === "edit" ? { edits: [] } : {}) },
+			{},
+			undefined,
+			{ requestRender() {} },
+			"/tmp/project",
+		);
+		component.updateResult({ content: [], details: undefined, isError: false });
+		parent.addChild(component);
+		return component;
+	};
+	const tools = [
+		makeTool("read", "group-a", "/tmp/project/src/a.ts"),
+		makeTool("read", "group-b", "/tmp/project/src/b.ts"),
+		makeTool("edit", "group-c", "/tmp/project/src/c.ts"),
+		makeTool("read", "group-d", "/tmp/project/src/d.ts"),
+		makeTool("read", "group-e", "/tmp/project/src/e.ts"),
+		makeTool("read", "group-f", "/tmp/project/src/f.ts"),
+		makeTool("read", "group-g", "/tmp/project/src/g.ts"),
+		makeTool("read", "group-test", "/tmp/project/test/g.ts"),
+	];
+	parent.render(100);
+	const details = tools.map((tool) => tool.render(100).map(stripTerminalControls).find((line) => line.trim()) ?? "");
+	assert.equal(tools[0].render(100)[0], "");
+	assert.notEqual(tools[1].render(100)[0], "");
+	assert.match(details[0], /read src\/a\.ts/);
+	assert.match(details[1], /read \.\/b\.ts/);
+	assert.match(details[2], /edit \.\/c\.ts/);
+	assert.match(details[5], /read \.\/f\.ts/);
+	assert.match(details[6], /read src\/g\.ts/);
+	assert.match(details[7], /read test\/g\.ts/);
+
+	interactivePrototype.addMessageToChat.call(chat, {
+		role: "assistant",
+		content: [{ type: "thinking", thinking: "Next batch" }],
+	});
+	const nextAssistant = chat.chatContainer.children.at(-1);
+	assert.equal(stripTerminalControls(nextAssistant.render(100)[0]).trim(), "");
+	const nextTool = new ToolExecutionComponent(
+		"read",
+		"next-group",
+		{},
+		{},
+		undefined,
+		{ requestRender() {} },
+		"/tmp/project",
+	);
+	nextTool.updateResult({ content: [], details: undefined, isError: false });
+	parent.addChild(nextTool);
+	nextTool.updateArgs({ path: "/tmp/project/src/h.ts" });
+	parent.render(100);
+	const nextDetail = nextTool.render(100).map(stripTerminalControls).find((line) => line.trim()) ?? "";
+	assert.match(nextDetail, /read src\/h\.ts/);
+
+	const liveMessage = {
+		role: "assistant",
+		timestamp: Date.now(),
+		content: [{ type: "thinking", thinking: "Live batch continuation" }],
+	};
+	for (const handler of customPiExtension.handlers.get("message_start") ?? []) {
+		await handler({ type: "message_start", message: liveMessage }, {});
+	}
+	const liveAssistant = new AssistantMessageComponent(liveMessage);
+	assert.equal(stripTerminalControls(liveAssistant.render(100)[0]).trim(), "");
+	for (const handler of customPiExtension.handlers.get("message_update") ?? []) {
+		await handler({ type: "message_update", message: liveMessage }, {});
+	}
+	assert.equal(globalThis[Symbol.for("pi.custom-pi.minimal-tool-state")].currentAssistantAfterTools, false);
 });
 
 test("Command uses relative paths, preserves both ends, and right-aligns facts", async () => {

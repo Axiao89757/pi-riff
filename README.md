@@ -6,6 +6,9 @@ Personal [Pi](https://pi.dev) extension for a compact, work-focused terminal UI.
 
 - Full, compact, enhanced Command, and deterministic Friendly tool-call rendering
 - Command uses workspace-relative paths, middle truncation, right-aligned timing, and deterministic result facts
+- Consecutive file tools reuse unchanged parent directories, with periodic full-path reminders
+- Tool calls form compact batches separated from assistant text
+- Thinking shows only current progress while streaming, collapses to a timed step count, and expands in Full mode
 - Friendly labels are generated locally from tool names and arguments
 - No additional model requests, prompt changes, tool schema changes, or display metadata
 - Tool and agent timing
