@@ -206,6 +206,7 @@ type AssistantMessageInstance = {
 	contentContainer: {
 		children: Component[];
 	};
+	hideThinkingBlock: boolean;
 };
 
 type AssistantMessagePrototype = {
@@ -682,29 +683,29 @@ class CollapsibleThinkingComponent implements Component {
 		private readonly content: Component,
 		private readonly thinking: string,
 		private readonly completed: boolean,
+		private readonly expanded: boolean,
 		private readonly durationMs?: number,
 	) {}
 
 	render(width: number): string[] {
-		if (minimalToolDisplayState().displayMode === "full") return this.content.render(width);
+		if (this.expanded) return this.content.render(width);
 
 		const fullLines = this.content.render(Math.max(width, 4096));
 		const visibleLines = fullLines.filter((line) => visibleWidth(line.replace(ANSI_SGR, "").trim()) > 0);
+		const theme = footerTimerState().getTheme?.();
+		const leadingPadding = visibleLines[0]?.replace(ANSI_SGR, "").match(/^\s*/)?.[0] ?? "";
 		if (!this.completed) {
-			const latest = visibleLines.at(-1);
+			const latest = this.thinking.split("\n").filter((line) => line.trim()).at(-1);
 			if (!latest) return [];
-			const theme = footerTimerState().getTheme?.();
+			const styledLatest = theme?.italic(theme.fg("thinkingText", latest)) ?? latest;
 			const ellipsis = theme?.italic(theme.fg("thinkingText", "...")) ?? "...";
-			const withoutTerminalPadding = latest.replace(/[\t ]+((?:\x1b\[[0-9;]*m)*)$/, "$1");
-			return [truncateToWidth(withoutTerminalPadding, width, ellipsis, true)];
+			return [truncateToWidth(leadingPadding + styledLatest, width, ellipsis, true)];
 		}
 
 		const steps = this.thinking.split("\n").filter((line) => line.trim()).length;
 		const duration = this.durationMs === undefined ? "" : ` · ${formatDuration(this.durationMs)}`;
 		const label = `Thinking · ${steps} ${steps === 1 ? "step" : "steps"}${duration}`;
-		const theme = footerTimerState().getTheme?.();
 		const styled = theme?.italic(theme.fg("thinkingText", label)) ?? label;
-		const leadingPadding = visibleLines[0]?.replace(ANSI_SGR, "").match(/^\s*/)?.[0] ?? "";
 		return [truncateToWidth(leadingPadding + styled, width, "...", true)];
 	}
 
@@ -734,6 +735,7 @@ function applyAssistantContentSpacing(
 				children[childIndex],
 				run.thinking ?? "",
 				completed,
+				!instance.hideThinkingBlock,
 				timing.durationMs,
 			);
 		}

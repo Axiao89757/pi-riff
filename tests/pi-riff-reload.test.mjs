@@ -325,7 +325,7 @@ test("Friendly labels are local, deterministic, and all four modes are selectabl
 	await toolStyle.handler("friendly", ctx);
 });
 
-test("Thinking shows latest progress, collapses on completion, and expands in Full", async () => {
+test("Thinking follows native visibility independently from tool display mode", async () => {
 	const toolStyle = customPiExtension.commands.get("tool-style");
 	await toolStyle.handler("command", { ui: { notify() {}, setToolsExpanded() {} } });
 	const message = {
@@ -333,7 +333,7 @@ test("Thinking shows latest progress, collapses on completion, and expands in Fu
 		timestamp: Date.now(),
 		content: [{ type: "thinking", thinking: "Planning files\nInspecting dependencies\nRunning checks" }],
 	};
-	const component = new AssistantMessageComponent(message);
+	const component = new AssistantMessageComponent(message, true);
 	let rendered = component.render(100).map(stripTerminalControls).join("\n");
 	assert.doesNotMatch(rendered, /Planning files|Inspecting dependencies/);
 	assert.match(rendered, /Running checks/);
@@ -347,10 +347,19 @@ test("Thinking shows latest progress, collapses on completion, and expands in Fu
 	await toolStyle.handler("full", { ui: { notify() {}, setToolsExpanded() {} } });
 	component.updateContent(completedMessage);
 	rendered = component.render(100).map(stripTerminalControls).join("\n");
+	assert.match(rendered, /Thinking · 3 steps/);
+	assert.doesNotMatch(rendered, /Planning files|Running checks/);
+
+	component.setHideThinkingBlock(false);
+	rendered = component.render(100).map(stripTerminalControls).join("\n");
 	assert.match(rendered, /Planning files/);
 	assert.match(rendered, /Running checks/);
 	assert.doesNotMatch(rendered, /Thinking · 3 steps/);
+
 	await toolStyle.handler("command", { ui: { notify() {}, setToolsExpanded() {} } });
+	rendered = component.render(100).map(stripTerminalControls).join("\n");
+	assert.match(rendered, /Planning files/);
+	assert.doesNotMatch(rendered, /Thinking · 3 steps/);
 
 	const mixed = new AssistantMessageComponent({
 		role: "assistant",
