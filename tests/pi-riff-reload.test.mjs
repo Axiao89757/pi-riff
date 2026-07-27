@@ -409,6 +409,18 @@ test("Thinking and tools stay contiguous while assistant body forms a separate b
 	const details = tools.map((tool) => tool.render(100).map(stripTerminalControls).find((line) => line.trim()) ?? "");
 	assert.notEqual(tools[0].render(100)[0], "");
 	assert.notEqual(tools[1].render(100)[0], "");
+	const updatedAssistant = {
+		role: "assistant",
+		content: [
+			{ type: "thinking", thinking: "Inspecting files" },
+			{ type: "text", text: "Assistant explanation before tools" },
+		],
+	};
+	for (const handler of customPiExtension.handlers.get("message_update") ?? []) {
+		await handler({ type: "message_update", message: updatedAssistant }, {});
+	}
+	assert.equal(tools[0].render(100)[0], "");
+	assert.notEqual(tools[1].render(100)[0], "");
 	assert.match(details[0], /read src\/a\.ts/);
 	assert.match(details[1], /read \.\/b\.ts/);
 	assert.match(details[2], /edit \.\/c\.ts/);

@@ -159,6 +159,7 @@ type MinimalToolExecutionInstance = GenericToolExecutionInstance & {
 	args: Record<string, unknown>;
 	callRendererComponent?: Component;
 	customPiCommandPath?: string;
+	customPiFirstInGroup?: boolean;
 	customPiGroupSpacing?: boolean;
 	customPiToolGroup?: number;
 	cwd: string;
@@ -867,13 +868,17 @@ function refreshMinimalToolPathContexts(components: Component[]): void {
 	let abbreviations = 0;
 	let directory: string | undefined;
 	let group: number | undefined;
+	const seenGroups = new Set<number>();
 	for (const component of components) {
 		if (!(component instanceof ToolExecutionComponent)) continue;
 		const tool = component as unknown as MinimalToolExecutionInstance;
-		if (tool.customPiToolGroup !== group) {
+		const toolGroup = tool.customPiToolGroup ?? minimalToolDisplayState().groupGeneration;
+		tool.customPiFirstInGroup = !seenGroups.has(toolGroup);
+		seenGroups.add(toolGroup);
+		if (toolGroup !== group) {
 			abbreviations = 0;
 			directory = undefined;
-			group = tool.customPiToolGroup;
+			group = toolGroup;
 		}
 		tool.customPiCommandPath = undefined;
 		if (tool.toolName !== "read" && tool.toolName !== "edit" && tool.toolName !== "write") {
@@ -1479,11 +1484,12 @@ function renderMinimalTool(instance: MinimalToolExecutionInstance, width: number
 	const theme = footerTimerState().getTheme?.();
 	const toolState = minimalToolDisplayState();
 	instance.customPiToolGroup ??= toolState.groupGeneration;
-	if (instance.customPiGroupSpacing === undefined) {
-		const isFirstTool = !toolState.spacedGroups.has(instance.customPiToolGroup);
-		instance.customPiGroupSpacing = isFirstTool && toolState.groupsAfterBody.has(instance.customPiToolGroup);
+	if (instance.customPiFirstInGroup === undefined) {
+		instance.customPiFirstInGroup = !toolState.spacedGroups.has(instance.customPiToolGroup);
 		toolState.spacedGroups.add(instance.customPiToolGroup);
 	}
+	instance.customPiGroupSpacing = instance.customPiFirstInGroup
+		&& toolState.groupsAfterBody.has(instance.customPiToolGroup);
 
 	trackMinimalToolAnimation(instance);
 	const toolSummary = toolState.displayMode === "friendly"
