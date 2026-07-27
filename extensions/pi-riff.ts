@@ -1661,6 +1661,12 @@ function setUserMessageImageExpansion(instance: UserMessageInstance, expanded: b
 	}
 }
 
+function styleFullWidthUserMessageLine(line: string, width: number, theme: FooterTheme | undefined): string {
+	if (!theme) return line;
+	const padding = " ".repeat(Math.max(0, width - visibleWidth(line)));
+	return theme.bg("userMessageBg", line + padding);
+}
+
 function renderFullWidthUserMessage(instance: UserMessageInstance, width: number): string[] | undefined {
 	if (width < 1) return undefined;
 	const state = userMessageTimeState();
@@ -1685,12 +1691,14 @@ function renderFullWidthUserMessage(instance: UserMessageInstance, width: number
 		const component = imageExpanded ? image.expanded : image.thumbnail;
 		lines.push(...component.render(maxImageWidth));
 	}
-	if (hasText) lines.push(...textLines);
+	const theme = state.getTheme?.();
+	if (hasText) lines.push(...textLines.map((line) => styleFullWidthUserMessageLine(line, width, theme)));
 
 	const timestamp = state.formatTimestamp?.(instance.customPiTimestamp);
 	if (timestamp) {
 		const displayTimestamp = truncateToWidth(timestamp, width, "...", false);
-		lines.push(state.getTheme?.().fg("dim", displayTimestamp) ?? displayTimestamp);
+		const styledTimestamp = theme?.fg("dim", displayTimestamp) ?? displayTimestamp;
+		lines.push(styleFullWidthUserMessageLine(styledTimestamp, width, theme));
 	}
 	if (lines.length > 0) {
 		lines[0] = OSC133_ZONE_START + lines[0];

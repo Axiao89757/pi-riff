@@ -35,7 +35,7 @@ const indexUrl = pathToFileURL(join(piRoot, "dist", "index.js"));
 const themeUrl = pathToFileURL(join(piRoot, "dist", "modes", "interactive", "theme", "theme.js"));
 const { loadExtensions } = await import(loaderUrl.href);
 const { FooterComponent, InteractiveMode, SkillInvocationMessageComponent, ToolExecutionComponent, UserMessageComponent, parseSkillBlock } = await import(indexUrl.href);
-const { initTheme } = await import(themeUrl.href);
+const { initTheme, theme: activeTheme } = await import(themeUrl.href);
 initTheme("dark");
 
 let legacyBindings = 0;
@@ -567,7 +567,8 @@ test("user messages reserve one blank row after the timestamp", () => {
 	assert.equal(stripTerminalControls(lines.at(-2)).trim(), "2026.7.20 10:34");
 });
 
-test("user messages render without bubbles at the full available width", () => {
+test("user messages render as distinguishable full-width bands without bubbles", () => {
+	globalThis[Symbol.for("pi.custom-pi.user-message-time")].getTheme = () => activeTheme;
 	const message = new UserMessageComponent("x".repeat(200));
 	message.customPiTimestamp = new Date(2026, 6, 20, 10, 34).getTime();
 
@@ -575,8 +576,14 @@ test("user messages render without bubbles at the full available width", () => {
 	const plainLines = lines.map(stripTerminalControls);
 	assert.equal(plainLines[0], "x".repeat(100));
 	assert.equal(plainLines[1], "x".repeat(100));
-	assert.equal(plainLines.at(-2), "2026.7.20 10:34");
-	assert.equal(lines.some((line) => /\x1b\[[0-9;]*48;/.test(line)), false);
+	assert.equal(plainLines.at(-2).trimEnd(), "2026.7.20 10:34");
+	assert.equal(lines.some((line) => /\x1b\[(?:48;2|48;5);/.test(line)), true);
+
+	const short = new UserMessageComponent("short message");
+	short.customPiTimestamp = message.customPiTimestamp;
+	const shortLine = stripTerminalControls(short.render(100)[0]);
+	assert.equal(shortLine.startsWith("short message"), true);
+	assert.equal(shortLine.length, 100);
 });
 
 test("setExpanded discards image records retained from the pre-thumbnail patch", () => {
