@@ -144,7 +144,6 @@ type MinimalToolDisplayState = {
 	animationTimer?: ReturnType<typeof setInterval>;
 	// Retained for wrappers installed by pre-Friendly /reload versions.
 	collapsedStyle: "minimal" | "compact";
-	currentAssistantAfterTools: boolean;
 	displayMode: ToolDisplayMode;
 	groupGeneration: number;
 	groupsAfterBody: Set<number>;
@@ -154,7 +153,6 @@ type MinimalToolDisplayState = {
 	renderMinimal?: (instance: MinimalToolExecutionInstance, width: number) => string[];
 	runningTools: Set<MinimalToolExecutionInstance>;
 	spacedGroups: Set<number>;
-	toolBatchActive: boolean;
 };
 
 type MinimalToolExecutionInstance = GenericToolExecutionInstance & {
@@ -207,7 +205,6 @@ type AssistantMessageInstance = {
 	contentContainer: {
 		children: Component[];
 	};
-	customPiAfterToolBatch?: boolean;
 };
 
 type AssistantMessagePrototype = {
@@ -722,10 +719,7 @@ function applyAssistantContentSpacing(
 ): void {
 	const runs = assistantContentRuns(message);
 	const children = instance.contentContainer.children;
-	if (minimalToolDisplayState().currentAssistantAfterTools) instance.customPiAfterToolBatch = true;
-	if (runs[0]?.kind === "thinking" && !instance.customPiAfterToolBatch && children[0] instanceof Spacer) {
-		children.shift();
-	}
+	if (runs[0]?.kind === "thinking" && children[0] instanceof Spacer) children.shift();
 
 	const completed = typeof timingMessage.stopReason === "string" && Boolean(timingMessage.stopReason);
 	const timing = thinkingTiming(timingMessage, completed);
@@ -792,7 +786,6 @@ function minimalToolDisplayState(): MinimalToolDisplayState {
 	};
 	const state = globals[MINIMAL_TOOL_STATE] ??= {
 		collapsedStyle: "minimal",
-		currentAssistantAfterTools: false,
 		displayMode: "command",
 		groupGeneration: 0,
 		groupsAfterBody: new Set<number>(),
@@ -800,18 +793,15 @@ function minimalToolDisplayState(): MinimalToolDisplayState {
 		pathContextGroup: 0,
 		runningTools: new Set<MinimalToolExecutionInstance>(),
 		spacedGroups: new Set<number>(),
-		toolBatchActive: false,
 	};
 	state.displayMode ??= "command";
 	state.collapsedStyle = state.displayMode === "compact" ? "compact" : "minimal";
-	state.currentAssistantAfterTools ??= false;
 	state.groupGeneration ??= 0;
 	state.groupsAfterBody ??= new Set<number>();
 	state.pathContextAbbreviations ??= 0;
 	state.pathContextGroup ??= state.groupGeneration;
 	state.runningTools ??= new Set<MinimalToolExecutionInstance>();
 	state.spacedGroups ??= new Set<number>();
-	state.toolBatchActive ??= false;
 	return state;
 }
 
@@ -821,12 +811,9 @@ function setToolDisplayMode(mode: ToolDisplayMode): void {
 	state.collapsedStyle = mode === "compact" ? "compact" : "minimal";
 }
 
-function assistantHasVisibleContent(message: Pick<AssistantMessage, "content">): boolean {
+function assistantHasVisibleBody(message: Pick<AssistantMessage, "content">): boolean {
 	return Array.isArray(message.content)
-		&& message.content.some((block) =>
-			(block.type === "text" && Boolean(block.text?.trim()))
-			|| (block.type === "thinking" && Boolean(block.thinking?.trim()))
-		);
+		&& message.content.some((block) => block.type === "text" && Boolean(block.text?.trim()));
 }
 
 function beginMinimalToolGroup(message?: Pick<AssistantMessage, "content">): void {
@@ -835,12 +822,12 @@ function beginMinimalToolGroup(message?: Pick<AssistantMessage, "content">): voi
 	state.pathContextAbbreviations = 0;
 	state.pathContextDirectory = undefined;
 	state.pathContextGroup = state.groupGeneration;
-	if (message && assistantHasVisibleContent(message)) state.groupsAfterBody.add(state.groupGeneration);
+	if (message && assistantHasVisibleBody(message)) state.groupsAfterBody.add(state.groupGeneration);
 }
 
 function markMinimalToolGroupAfterBody(message: Pick<AssistantMessage, "content">): void {
 	const state = minimalToolDisplayState();
-	if (assistantHasVisibleContent(message)) state.groupsAfterBody.add(state.groupGeneration);
+	if (assistantHasVisibleBody(message)) state.groupsAfterBody.add(state.groupGeneration);
 }
 
 function minimalPath(value: unknown, cwd: string): string {
@@ -1561,10 +1548,8 @@ function installMinimalToolGrouping(): void {
 		containerPrototype.addChild = function (component) {
 			if (component instanceof ToolExecutionComponent) {
 				const tool = component as unknown as MinimalToolExecutionInstance;
-				const state = minimalToolDisplayState();
-				tool.customPiToolGroup ??= state.groupGeneration;
+				tool.customPiToolGroup ??= minimalToolDisplayState().groupGeneration;
 				bindMinimalToolPathContext(tool);
-				state.toolBatchActive = true;
 			}
 			addChildWithGroup.call(this, component);
 		};
@@ -1604,24 +1589,17 @@ function installMinimalToolGrouping(): void {
 	if (!prototype.customPiToolGroupingV2Patched) {
 		const addGroupedMessage = prototype.addMessageToChat;
 		prototype.addMessageToChat = function (message, options) {
-			const state = minimalToolDisplayState();
 			if (message.role !== "assistant") {
-				if (message.role === "user") state.toolBatchActive = false;
 				addGroupedMessage.call(this, message, options);
 				return;
 			}
 
-			state.currentAssistantAfterTools = state.toolBatchActive;
-			state.toolBatchActive = false;
+			const state = minimalToolDisplayState();
 			state.pathContextAbbreviations = 0;
 			state.pathContextDirectory = undefined;
 			state.pathContextGroup = state.groupGeneration + 1;
-			try {
-				addGroupedMessage.call(this, message, options);
-				markMinimalToolGroupAfterBody({ content: message.content ?? [] });
-			} finally {
-				state.currentAssistantAfterTools = false;
-			}
+			addGroupedMessage.call(this, message, options);
+			markMinimalToolGroupAfterBody({ content: message.content ?? [] });
 		};
 		Object.defineProperty(prototype, "customPiToolGroupingV2Patched", {
 			value: true,
@@ -2881,32 +2859,18 @@ export default function (pi: ExtensionAPI) {
 
 
 	pi.on("message_start", (event) => {
-		const state = minimalToolDisplayState();
-		if (event.message.role === "user") {
-			state.toolBatchActive = false;
-			return;
-		}
-		if (event.message.role !== "assistant") return;
-		state.currentAssistantAfterTools = state.toolBatchActive;
-		state.toolBatchActive = false;
-		beginMinimalToolGroup(event.message as AssistantMessage);
+		if (event.message.role === "assistant") beginMinimalToolGroup(event.message as AssistantMessage);
 	});
 
 	pi.on("message_update", (event) => {
 		const message = event.message as AssistantMessage;
 		cleanThinkingBlocks(message);
-		if (message.role === "assistant") {
-			minimalToolDisplayState().currentAssistantAfterTools = false;
-			markMinimalToolGroupAfterBody(message);
-		}
+		if (message.role === "assistant") markMinimalToolGroupAfterBody(message);
 	});
 
 	pi.on("message_end", (event) => {
 		const message = event.message as AssistantMessage;
-		if (message.role === "assistant") {
-			minimalToolDisplayState().currentAssistantAfterTools = false;
-			markMinimalToolGroupAfterBody(message);
-		}
+		if (message.role === "assistant") markMinimalToolGroupAfterBody(message);
 		if (!cleanThinkingBlocks(message)) return;
 		return { message: event.message };
 	});

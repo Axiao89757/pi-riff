@@ -351,9 +351,25 @@ test("Thinking shows latest progress, collapses on completion, and expands in Fu
 	assert.match(rendered, /Running checks/);
 	assert.doesNotMatch(rendered, /Thinking · 3 steps/);
 	await toolStyle.handler("command", { ui: { notify() {}, setToolsExpanded() {} } });
+
+	const mixed = new AssistantMessageComponent({
+		role: "assistant",
+		timestamp: Date.now() + 1,
+		stopReason: "stop",
+		content: [
+			{ type: "thinking", thinking: "First thought" },
+			{ type: "text", text: "Assistant body" },
+			{ type: "thinking", thinking: "Second thought" },
+		],
+	});
+	const mixedLines = mixed.render(100).map(stripTerminalControls);
+	const bodyIndex = mixedLines.findIndex((line) => line.includes("Assistant body"));
+	assert.ok(bodyIndex > 0);
+	assert.equal(mixedLines[bodyIndex - 1].trim(), "");
+	assert.equal(mixedLines[bodyIndex + 1].trim(), "");
 });
 
-test("Command groups tool batches and reuses unchanged file directories", async () => {
+test("Thinking and tools stay contiguous while assistant body forms a separate block", async () => {
 	assert.equal(interactivePrototype.customPiToolGroupingV2Patched, true);
 	assert.equal(containerPrototype.customPiToolGroupBindingV2Patched, true);
 	const toolStyle = customPiExtension.commands.get("tool-style");
@@ -391,7 +407,7 @@ test("Command groups tool batches and reuses unchanged file directories", async 
 	];
 	parent.render(100);
 	const details = tools.map((tool) => tool.render(100).map(stripTerminalControls).find((line) => line.trim()) ?? "");
-	assert.equal(tools[0].render(100)[0], "");
+	assert.notEqual(tools[0].render(100)[0], "");
 	assert.notEqual(tools[1].render(100)[0], "");
 	assert.match(details[0], /read src\/a\.ts/);
 	assert.match(details[1], /read \.\/b\.ts/);
@@ -402,7 +418,7 @@ test("Command groups tool batches and reuses unchanged file directories", async 
 
 	interactivePrototype.addMessageToChat.call(chat, {
 		role: "assistant",
-		content: [{ type: "thinking", thinking: "Next batch" }],
+		content: [{ type: "text", text: "Next assistant body" }],
 	});
 	const nextAssistant = chat.chatContainer.children.at(-1);
 	assert.equal(stripTerminalControls(nextAssistant.render(100)[0]).trim(), "");
@@ -419,7 +435,9 @@ test("Command groups tool batches and reuses unchanged file directories", async 
 	parent.addChild(nextTool);
 	nextTool.updateArgs({ path: "/tmp/project/src/h.ts" });
 	parent.render(100);
-	const nextDetail = nextTool.render(100).map(stripTerminalControls).find((line) => line.trim()) ?? "";
+	const nextToolLines = nextTool.render(100);
+	const nextDetail = nextToolLines.map(stripTerminalControls).find((line) => line.trim()) ?? "";
+	assert.equal(nextToolLines[0], "");
 	assert.match(nextDetail, /read src\/h\.ts/);
 
 	const liveMessage = {
@@ -431,11 +449,7 @@ test("Command groups tool batches and reuses unchanged file directories", async 
 		await handler({ type: "message_start", message: liveMessage }, {});
 	}
 	const liveAssistant = new AssistantMessageComponent(liveMessage);
-	assert.equal(stripTerminalControls(liveAssistant.render(100)[0]).trim(), "");
-	for (const handler of customPiExtension.handlers.get("message_update") ?? []) {
-		await handler({ type: "message_update", message: liveMessage }, {});
-	}
-	assert.equal(globalThis[Symbol.for("pi.custom-pi.minimal-tool-state")].currentAssistantAfterTools, false);
+	assert.match(stripTerminalControls(liveAssistant.render(100)[0]), /Live batch continuation/);
 });
 
 test("Command uses relative paths, preserves both ends, and right-aligns facts", async () => {
