@@ -1709,7 +1709,7 @@ function renderFullWidthUserMessage(instance: UserMessageInstance, width: number
 	if (timestamp) {
 		const displayTimestamp = truncateToWidth(timestamp, contentWidth, "...", false);
 		const styledTimestamp = theme?.fg("dim", displayTimestamp) ?? displayTimestamp;
-		lines.push(" ".repeat(horizontalPadding) + styledTimestamp);
+		lines.push(styledTimestamp);
 	}
 	if (lines.length > 0) {
 		lines[0] = OSC133_ZONE_START + lines[0];
