@@ -378,6 +378,96 @@ test("Thinking follows native visibility independently from tool display mode", 
 	assert.equal(mixedLines[bodyIndex + 1].trim(), "");
 });
 
+test("live collapsed Thinking and its following tool render on adjacent lines", async () => {
+	const toolStyle = customPiExtension.commands.get("tool-style");
+	await toolStyle.handler("command", { ui: { notify() {}, setToolsExpanded() {} } });
+	const message = {
+		role: "assistant",
+		timestamp: Date.now() + 2,
+		content: [{ type: "thinking", thinking: "Inspecting live state" }],
+	};
+	for (const handler of customPiExtension.handlers.get("message_start") ?? []) {
+		await handler({ type: "message_start", message }, {});
+	}
+
+	const chat = new Container();
+	const assistant = new AssistantMessageComponent(message, true);
+	chat.addChild(assistant);
+	const updated = {
+		...message,
+		content: [
+			...message.content,
+			{ type: "toolCall", id: "live-adjacent", name: "read", arguments: { path: "/tmp/project/src/live.ts" } },
+		],
+	};
+	for (const handler of customPiExtension.handlers.get("message_update") ?? []) {
+		await handler({ type: "message_update", message: updated }, {});
+	}
+	assistant.updateContent(updated);
+	const tool = new ToolExecutionComponent(
+		"read",
+		"live-adjacent",
+		{ path: "/tmp/project/src/live.ts" },
+		{},
+		undefined,
+		{ requestRender() {} },
+		"/tmp/project",
+	);
+	tool.updateResult({ content: [], details: undefined, isError: false });
+	chat.addChild(tool);
+	const completed = { ...updated, stopReason: "toolUse" };
+	for (const handler of customPiExtension.handlers.get("message_end") ?? []) {
+		await handler({ type: "message_end", message: completed }, {});
+	}
+	assistant.updateContent(completed);
+
+	const lines = chat.render(100).map(stripTerminalControls);
+	const thinkingIndex = lines.findIndex((line) => line.includes("Thinking · 1 step"));
+	const toolIndex = lines.findIndex((line) => line.includes("read") && line.includes("live.ts"));
+	assert.equal(toolIndex, thinkingIndex + 1, JSON.stringify(lines));
+
+	const bodyMessage = {
+		role: "assistant",
+		timestamp: Date.now() + 3,
+		content: [{ type: "thinking", thinking: "Preparing explanation" }],
+	};
+	for (const handler of customPiExtension.handlers.get("message_start") ?? []) {
+		await handler({ type: "message_start", message: bodyMessage }, {});
+	}
+	const bodyChat = new Container();
+	const bodyAssistant = new AssistantMessageComponent(bodyMessage, true);
+	bodyChat.addChild(bodyAssistant);
+	const bodyUpdated = {
+		...bodyMessage,
+		content: [
+			...bodyMessage.content,
+			{ type: "text", text: "Assistant explanation" },
+			{ type: "toolCall", id: "body-separated", name: "read", arguments: { path: "/tmp/project/src/body.ts" } },
+		],
+	};
+	for (const handler of customPiExtension.handlers.get("message_update") ?? []) {
+		await handler({ type: "message_update", message: bodyUpdated }, {});
+	}
+	bodyAssistant.updateContent(bodyUpdated);
+	assert.equal(stripTerminalControls(bodyAssistant.render(100).at(-1)).trim(), "");
+	const bodyTool = new ToolExecutionComponent(
+		"read",
+		"body-separated",
+		{ path: "/tmp/project/src/body.ts" },
+		{},
+		undefined,
+		{ requestRender() {} },
+		"/tmp/project",
+	);
+	bodyTool.updateResult({ content: [], details: undefined, isError: false });
+	bodyChat.addChild(bodyTool);
+	const bodyLines = bodyChat.render(100).map(stripTerminalControls);
+	const bodyIndex = bodyLines.findIndex((line) => line.includes("Assistant explanation"));
+	const bodyToolIndex = bodyLines.findIndex((line) => line.includes("read") && line.includes("body.ts"));
+	assert.equal(bodyToolIndex, bodyIndex + 2, JSON.stringify(bodyLines));
+	assert.equal(bodyLines[bodyIndex + 1].trim(), "");
+});
+
 test("Thinking and tools stay contiguous while assistant body forms a separate block", async () => {
 	assert.equal(interactivePrototype.customPiToolGroupingV2Patched, true);
 	assert.equal(containerPrototype.customPiToolGroupBindingV2Patched, true);
@@ -428,7 +518,7 @@ test("Thinking and tools stay contiguous while assistant body forms a separate b
 	for (const handler of customPiExtension.handlers.get("message_update") ?? []) {
 		await handler({ type: "message_update", message: updatedAssistant }, {});
 	}
-	assert.equal(tools[0].render(100)[0], "");
+	assert.notEqual(tools[0].render(100)[0], "");
 	assert.notEqual(tools[1].render(100)[0], "");
 	assert.match(details[0], /read src\/a\.ts/);
 	assert.match(details[1], /read \.\/b\.ts/);
@@ -458,7 +548,7 @@ test("Thinking and tools stay contiguous while assistant body forms a separate b
 	parent.render(100);
 	const nextToolLines = nextTool.render(100);
 	const nextDetail = nextToolLines.map(stripTerminalControls).find((line) => line.trim()) ?? "";
-	assert.equal(nextToolLines[0], "");
+	assert.notEqual(nextToolLines[0], "");
 	assert.match(nextDetail, /read src\/h\.ts/);
 
 	const liveMessage = {

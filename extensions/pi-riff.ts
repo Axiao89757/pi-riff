@@ -159,8 +159,6 @@ type MinimalToolExecutionInstance = GenericToolExecutionInstance & {
 	args: Record<string, unknown>;
 	callRendererComponent?: Component;
 	customPiCommandPath?: string;
-	customPiFirstInGroup?: boolean;
-	customPiGroupSpacing?: boolean;
 	customPiToolGroup?: number;
 	cwd: string;
 	formatToolExecution(): string;
@@ -745,6 +743,9 @@ function applyAssistantContentSpacing(
 			children.splice(childIndex, 0, new Spacer(1));
 		}
 	}
+	const endsWithBody = runs.at(-1)?.kind === "body";
+	const hasToolCalls = message.content.some((block) => block.type === "toolCall");
+	if (endsWithBody && hasToolCalls && !(children.at(-1) instanceof Spacer)) children.push(new Spacer(1));
 }
 
 function installAssistantPresentation(): void {
@@ -870,13 +871,10 @@ function refreshMinimalToolPathContexts(components: Component[]): void {
 	let abbreviations = 0;
 	let directory: string | undefined;
 	let group: number | undefined;
-	const seenGroups = new Set<number>();
 	for (const component of components) {
 		if (!(component instanceof ToolExecutionComponent)) continue;
 		const tool = component as unknown as MinimalToolExecutionInstance;
 		const toolGroup = tool.customPiToolGroup ?? minimalToolDisplayState().groupGeneration;
-		tool.customPiFirstInGroup = !seenGroups.has(toolGroup);
-		seenGroups.add(toolGroup);
 		if (toolGroup !== group) {
 			abbreviations = 0;
 			directory = undefined;
@@ -1486,13 +1484,6 @@ function renderMinimalTool(instance: MinimalToolExecutionInstance, width: number
 	const theme = footerTimerState().getTheme?.();
 	const toolState = minimalToolDisplayState();
 	instance.customPiToolGroup ??= toolState.groupGeneration;
-	if (instance.customPiFirstInGroup === undefined) {
-		instance.customPiFirstInGroup = !toolState.spacedGroups.has(instance.customPiToolGroup);
-		toolState.spacedGroups.add(instance.customPiToolGroup);
-	}
-	instance.customPiGroupSpacing = instance.customPiFirstInGroup
-		&& toolState.groupsAfterBody.has(instance.customPiToolGroup);
-
 	trackMinimalToolAnimation(instance);
 	const toolSummary = toolState.displayMode === "friendly"
 		? friendlyToolSummary(instance)
@@ -1522,7 +1513,7 @@ function renderMinimalTool(instance: MinimalToolExecutionInstance, width: number
 		? " ".repeat(Math.max(metadataGap, contentWidth - visibleWidth(summary) - metadataWidth))
 		: "";
 	const line = runningMarker + summary + padding + styledMetadata;
-	const lines = instance.customPiGroupSpacing ? ["", line] : [line];
+	const lines = [line];
 
 	if (instance.result?.isError) {
 		const error = genericErrorText(instance);
