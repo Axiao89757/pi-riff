@@ -557,15 +557,18 @@ test("skill messages stay collapsed and image binding does not leak skill text",
 	legacyBindings = 0;
 });
 
-test("user messages reserve internal bottom padding and one external blank row", () => {
+test("user message timestamps sit below the padded background band", () => {
+	globalThis[Symbol.for("pi.custom-pi.user-message-time")].getTheme = () => activeTheme;
 	const message = new UserMessageComponent("spacing test");
 	message.customPiTimestamp = new Date(2026, 6, 20, 10, 34).getTime();
 
 	const lines = message.render(80);
+	const timestampLine = lines.at(-2);
 
 	assert.equal(lines.at(-1), " ".repeat(80));
-	assert.equal(stripTerminalControls(lines.at(-2)), " ".repeat(80));
-	assert.equal(stripTerminalControls(lines.at(-3)).trim(), "2026.7.20 10:34");
+	assert.equal(stripTerminalControls(lines.at(-3)), " ".repeat(80));
+	assert.equal(stripTerminalControls(timestampLine), " 2026.7.20 10:34");
+	assert.equal(/\x1b\[(?:48;2|48;5);/.test(timestampLine), false);
 });
 
 test("user message bands have one cell of padding on every side", () => {
@@ -579,8 +582,9 @@ test("user message bands have one cell of padding on every side", () => {
 	assert.equal(plainLines[1], ` ${"x".repeat(98)} `);
 	assert.equal(plainLines[2], ` ${"x".repeat(98)} `);
 	assert.equal(plainLines[3], ` ${"x".repeat(4)}${" ".repeat(95)}`);
-	assert.equal(plainLines.at(-3).trim(), "2026.7.20 10:34");
-	assert.equal(plainLines.at(-2), " ".repeat(100));
+	assert.equal(plainLines.at(-3), " ".repeat(100));
+	assert.equal(plainLines.at(-2), " 2026.7.20 10:34");
+	assert.equal(/\x1b\[(?:48;2|48;5);/.test(lines.at(-2)), false);
 	assert.equal(lines.some((line) => /\x1b\[(?:48;2|48;5);/.test(line)), true);
 
 	const short = new UserMessageComponent("short message");
