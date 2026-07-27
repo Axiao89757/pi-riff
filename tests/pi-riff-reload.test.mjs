@@ -557,32 +557,36 @@ test("skill messages stay collapsed and image binding does not leak skill text",
 	legacyBindings = 0;
 });
 
-test("user messages reserve one blank row after the timestamp", () => {
+test("user messages reserve internal bottom padding and one external blank row", () => {
 	const message = new UserMessageComponent("spacing test");
 	message.customPiTimestamp = new Date(2026, 6, 20, 10, 34).getTime();
 
 	const lines = message.render(80);
 
 	assert.equal(lines.at(-1), " ".repeat(80));
-	assert.equal(stripTerminalControls(lines.at(-2)).trim(), "2026.7.20 10:34");
+	assert.equal(stripTerminalControls(lines.at(-2)), " ".repeat(80));
+	assert.equal(stripTerminalControls(lines.at(-3)).trim(), "2026.7.20 10:34");
 });
 
-test("user messages render as distinguishable full-width bands without bubbles", () => {
+test("user message bands have one cell of padding on every side", () => {
 	globalThis[Symbol.for("pi.custom-pi.user-message-time")].getTheme = () => activeTheme;
 	const message = new UserMessageComponent("x".repeat(200));
 	message.customPiTimestamp = new Date(2026, 6, 20, 10, 34).getTime();
 
 	const lines = message.render(100);
 	const plainLines = lines.map(stripTerminalControls);
-	assert.equal(plainLines[0], "x".repeat(100));
-	assert.equal(plainLines[1], "x".repeat(100));
-	assert.equal(plainLines.at(-2).trimEnd(), "2026.7.20 10:34");
+	assert.equal(plainLines[0], " ".repeat(100));
+	assert.equal(plainLines[1], ` ${"x".repeat(98)} `);
+	assert.equal(plainLines[2], ` ${"x".repeat(98)} `);
+	assert.equal(plainLines[3], ` ${"x".repeat(4)}${" ".repeat(95)}`);
+	assert.equal(plainLines.at(-3).trim(), "2026.7.20 10:34");
+	assert.equal(plainLines.at(-2), " ".repeat(100));
 	assert.equal(lines.some((line) => /\x1b\[(?:48;2|48;5);/.test(line)), true);
 
 	const short = new UserMessageComponent("short message");
 	short.customPiTimestamp = message.customPiTimestamp;
-	const shortLine = stripTerminalControls(short.render(100)[0]);
-	assert.equal(shortLine.startsWith("short message"), true);
+	const shortLine = stripTerminalControls(short.render(100)[1]);
+	assert.equal(shortLine.startsWith(" short message"), true);
 	assert.equal(shortLine.length, 100);
 });
 

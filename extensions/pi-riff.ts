@@ -1661,10 +1661,16 @@ function setUserMessageImageExpansion(instance: UserMessageInstance, expanded: b
 	}
 }
 
-function styleFullWidthUserMessageLine(line: string, width: number, theme: FooterTheme | undefined): string {
-	if (!theme) return line;
-	const padding = " ".repeat(Math.max(0, width - visibleWidth(line)));
-	return theme.bg("userMessageBg", line + padding);
+function styleFullWidthUserMessageLine(
+	line: string,
+	width: number,
+	horizontalPadding: number,
+	theme: FooterTheme | undefined,
+): string {
+	const leftPadding = " ".repeat(horizontalPadding);
+	const rightPadding = " ".repeat(Math.max(0, width - horizontalPadding - visibleWidth(line)));
+	const paddedLine = leftPadding + line + rightPadding;
+	return theme?.bg("userMessageBg", paddedLine) ?? paddedLine;
 }
 
 function renderFullWidthUserMessage(instance: UserMessageInstance, width: number): string[] | undefined {
@@ -1679,27 +1685,30 @@ function renderFullWidthUserMessage(instance: UserMessageInstance, width: number
 	const messageContent = instance.children[0]?.children[0];
 	if (!messageContent) return undefined;
 
-	const textLines = messageContent.render(width);
+	const horizontalPadding = width >= 3 ? 1 : 0;
+	const contentWidth = Math.max(1, width - horizontalPadding * 2);
+	const textLines = messageContent.render(contentWidth);
 	const hasText = textLines.some((line) => visibleWidth(line.replace(ANSI_SGR, "").trimEnd()) > 0);
 	const images = instance.customPiImages ?? [];
 	if (!hasText && images.length === 0) return undefined;
 
 	const imageExpanded = state.imagesExpanded;
-	const maxImageWidth = imageExpanded ? width : Math.max(1, Math.min(60, width));
-	const lines: string[] = [];
+	const maxImageWidth = imageExpanded ? contentWidth : Math.max(1, Math.min(60, contentWidth));
+	const bodyLines: string[] = [];
 	for (const image of images) {
 		const component = imageExpanded ? image.expanded : image.thumbnail;
-		lines.push(...component.render(maxImageWidth));
+		bodyLines.push(...component.render(maxImageWidth));
 	}
-	const theme = state.getTheme?.();
-	if (hasText) lines.push(...textLines.map((line) => styleFullWidthUserMessageLine(line, width, theme)));
+	if (hasText) bodyLines.push(...textLines);
 
+	const theme = state.getTheme?.();
 	const timestamp = state.formatTimestamp?.(instance.customPiTimestamp);
 	if (timestamp) {
-		const displayTimestamp = truncateToWidth(timestamp, width, "...", false);
-		const styledTimestamp = theme?.fg("dim", displayTimestamp) ?? displayTimestamp;
-		lines.push(styleFullWidthUserMessageLine(styledTimestamp, width, theme));
+		const displayTimestamp = truncateToWidth(timestamp, contentWidth, "...", false);
+		bodyLines.push(theme?.fg("dim", displayTimestamp) ?? displayTimestamp);
 	}
+	const styleLine = (line: string) => styleFullWidthUserMessageLine(line, width, horizontalPadding, theme);
+	const lines = [styleLine(""), ...bodyLines.map(styleLine), styleLine("")];
 	if (lines.length > 0) {
 		lines[0] = OSC133_ZONE_START + lines[0];
 		lines[lines.length - 1] = OSC133_ZONE_END + OSC133_ZONE_FINAL + lines[lines.length - 1];
