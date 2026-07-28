@@ -204,6 +204,7 @@ type AssistantBodyPresentationInstance = Component & {
 	content?: Component;
 	customPiAssistantBodyDivider?: boolean;
 	customPiAssistantBodyFrame?: boolean;
+	customPiAssistantBodyRail?: boolean;
 };
 
 type AssistantMessagePrototype = {
@@ -697,26 +698,21 @@ function thinkingTiming(message: AssistantMessage, completed: boolean): Thinking
 	return timing;
 }
 
-class AssistantBodyFrameComponent implements Component {
-	readonly customPiAssistantBodyFrame = true;
+class AssistantBodyRailComponent implements Component {
+	readonly customPiAssistantBodyRail = true;
 
 	constructor(readonly content: Component) {}
 
 	render(width: number): string[] {
-		if (width < 4) return this.content.render(width);
 		const theme = footerTimerState().getTheme?.();
-		const styleBorder = (text: string) => theme?.fg("dim", text) ?? text;
-		const innerWidth = width - 4;
-		const top = styleBorder(`┌${"─".repeat(width - 2)}┐`);
-		const bottom = styleBorder(`└${"─".repeat(width - 2)}┘`);
-		const lines = this.content.render(innerWidth).map((line) => {
-			const content = truncateToWidth(line, innerWidth, "...", true);
-			const leadingPadding = content.replace(ANSI_SGR, "").startsWith(" ") ? "" : " ";
-			const usedWidth = 3 + visibleWidth(leadingPadding) + visibleWidth(content);
-			const trailingPadding = " ".repeat(Math.max(0, width - usedWidth));
-			return `${styleBorder("│")}${leadingPadding}${content}${trailingPadding} ${styleBorder("│")}`;
+		return this.content.render(width).map((line) => {
+			if (!theme || !line.replace(ANSI_SGR, "").startsWith(" ")) return line;
+			const paddingIndex = line.indexOf(" ");
+			if (paddingIndex < 0) return line;
+			return line.slice(0, paddingIndex)
+				+ theme.bg("selectedBg", " ")
+				+ line.slice(paddingIndex + 1);
 		});
-		return [top, ...lines, bottom];
 	}
 
 	invalidate(): void {
@@ -786,10 +782,11 @@ function applyAssistantContentSpacing(
 			);
 		} else if (run.kind === "body") {
 			const body = children[childIndex] as AssistantBodyPresentationInstance;
-			if (!body.customPiAssistantBodyFrame) {
-				// Unwrap divider components retained by the previous /reload version.
-				const content = body.customPiAssistantBodyDivider && body.content ? body.content : body;
-				children[childIndex] = new AssistantBodyFrameComponent(content);
+			if (!body.customPiAssistantBodyRail) {
+				// Unwrap presentation components retained by previous /reload versions.
+				const wrapped = body.customPiAssistantBodyDivider || body.customPiAssistantBodyFrame;
+				const content = wrapped && body.content ? body.content : body;
+				children[childIndex] = new AssistantBodyRailComponent(content);
 			}
 		}
 		childIndex += 1;
