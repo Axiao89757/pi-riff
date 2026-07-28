@@ -391,8 +391,10 @@ test("Thinking follows native visibility independently from tool display mode", 
 	const bodyIndex = mixedLines.findIndex((line) => line.includes("Assistant body"));
 	assert.ok(bodyIndex > 1);
 	assert.equal(mixedLines[bodyIndex - 2].trim(), "");
-	assert.equal(mixedLines[bodyIndex - 1], "─".repeat(100));
-	assert.equal(mixedLines[bodyIndex + 1].trim(), "");
+	assert.equal(mixedLines[bodyIndex - 1], `┌${"─".repeat(98)}┐`);
+	assert.match(mixedLines[bodyIndex], /^│ Assistant body\s+│$/);
+	assert.equal(mixedLines[bodyIndex + 1], `└${"─".repeat(98)}┘`);
+	assert.equal(mixedLines[bodyIndex + 2].trim(), "");
 });
 
 test("live collapsed Thinking and its following tool render on adjacent lines", async () => {
@@ -481,9 +483,11 @@ test("live collapsed Thinking and its following tool render on adjacent lines", 
 	const bodyLines = bodyChat.render(100).map(stripTerminalControls);
 	const bodyIndex = bodyLines.findIndex((line) => line.includes("Assistant explanation"));
 	const bodyToolIndex = bodyLines.findIndex((line) => line.includes("read") && line.includes("body.ts"));
-	assert.equal(bodyLines[bodyIndex - 1], "─".repeat(100));
-	assert.equal(bodyToolIndex, bodyIndex + 2, JSON.stringify(bodyLines));
-	assert.equal(bodyLines[bodyIndex + 1].trim(), "");
+	assert.equal(bodyLines[bodyIndex - 1], `┌${"─".repeat(98)}┐`);
+	assert.match(bodyLines[bodyIndex], /^│ Assistant explanation\s+│$/);
+	assert.equal(bodyLines[bodyIndex + 1], `└${"─".repeat(98)}┘`);
+	assert.equal(bodyToolIndex, bodyIndex + 3, JSON.stringify(bodyLines));
+	assert.equal(bodyLines[bodyIndex + 2].trim(), "");
 });
 
 test("Thinking and tools stay contiguous while every file tool keeps its full relative path", async () => {

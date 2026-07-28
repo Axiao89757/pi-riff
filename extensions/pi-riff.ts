@@ -200,8 +200,10 @@ type AssistantMessageInstance = {
 	hideThinkingBlock: boolean;
 };
 
-type AssistantBodyDividerInstance = Component & {
+type AssistantBodyPresentationInstance = Component & {
+	content?: Component;
 	customPiAssistantBodyDivider?: boolean;
+	customPiAssistantBodyFrame?: boolean;
 };
 
 type AssistantMessagePrototype = {
@@ -695,15 +697,26 @@ function thinkingTiming(message: AssistantMessage, completed: boolean): Thinking
 	return timing;
 }
 
-class AssistantBodyDividerComponent implements Component {
-	readonly customPiAssistantBodyDivider = true;
+class AssistantBodyFrameComponent implements Component {
+	readonly customPiAssistantBodyFrame = true;
 
-	constructor(private readonly content: Component) {}
+	constructor(readonly content: Component) {}
 
 	render(width: number): string[] {
+		if (width < 4) return this.content.render(width);
 		const theme = footerTimerState().getTheme?.();
-		const divider = "─".repeat(Math.max(0, width));
-		return [theme?.fg("dim", divider) ?? divider, ...this.content.render(width)];
+		const styleBorder = (text: string) => theme?.fg("dim", text) ?? text;
+		const innerWidth = width - 4;
+		const top = styleBorder(`┌${"─".repeat(width - 2)}┐`);
+		const bottom = styleBorder(`└${"─".repeat(width - 2)}┘`);
+		const lines = this.content.render(innerWidth).map((line) => {
+			const content = truncateToWidth(line, innerWidth, "...", true);
+			const leadingPadding = content.replace(ANSI_SGR, "").startsWith(" ") ? "" : " ";
+			const usedWidth = 3 + visibleWidth(leadingPadding) + visibleWidth(content);
+			const trailingPadding = " ".repeat(Math.max(0, width - usedWidth));
+			return `${styleBorder("│")}${leadingPadding}${content}${trailingPadding} ${styleBorder("│")}`;
+		});
+		return [top, ...lines, bottom];
 	}
 
 	invalidate(): void {
@@ -771,9 +784,13 @@ function applyAssistantContentSpacing(
 				!instance.hideThinkingBlock,
 				timing.durationMs,
 			);
-		} else if (run.kind === "body"
-			&& !(children[childIndex] as AssistantBodyDividerInstance).customPiAssistantBodyDivider) {
-			children[childIndex] = new AssistantBodyDividerComponent(children[childIndex]);
+		} else if (run.kind === "body") {
+			const body = children[childIndex] as AssistantBodyPresentationInstance;
+			if (!body.customPiAssistantBodyFrame) {
+				// Unwrap divider components retained by the previous /reload version.
+				const content = body.customPiAssistantBodyDivider && body.content ? body.content : body;
+				children[childIndex] = new AssistantBodyFrameComponent(content);
+			}
 		}
 		childIndex += 1;
 		if (run.kind === "body" && runs[runIndex + 1]?.kind === "thinking"
