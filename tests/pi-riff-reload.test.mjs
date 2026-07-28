@@ -389,8 +389,9 @@ test("Thinking follows native visibility independently from tool display mode", 
 	});
 	const mixedLines = mixed.render(100).map(stripTerminalControls);
 	const bodyIndex = mixedLines.findIndex((line) => line.includes("Assistant body"));
-	assert.ok(bodyIndex > 0);
-	assert.equal(mixedLines[bodyIndex - 1].trim(), "");
+	assert.ok(bodyIndex > 1);
+	assert.equal(mixedLines[bodyIndex - 2].trim(), "");
+	assert.equal(mixedLines[bodyIndex - 1], "─".repeat(100));
 	assert.equal(mixedLines[bodyIndex + 1].trim(), "");
 });
 
@@ -480,6 +481,7 @@ test("live collapsed Thinking and its following tool render on adjacent lines", 
 	const bodyLines = bodyChat.render(100).map(stripTerminalControls);
 	const bodyIndex = bodyLines.findIndex((line) => line.includes("Assistant explanation"));
 	const bodyToolIndex = bodyLines.findIndex((line) => line.includes("read") && line.includes("body.ts"));
+	assert.equal(bodyLines[bodyIndex - 1], "─".repeat(100));
 	assert.equal(bodyToolIndex, bodyIndex + 2, JSON.stringify(bodyLines));
 	assert.equal(bodyLines[bodyIndex + 1].trim(), "");
 });

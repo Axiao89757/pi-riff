@@ -200,6 +200,10 @@ type AssistantMessageInstance = {
 	hideThinkingBlock: boolean;
 };
 
+type AssistantBodyDividerInstance = Component & {
+	customPiAssistantBodyDivider?: boolean;
+};
+
 type AssistantMessagePrototype = {
 	customPiContentSpacingV2Patched?: boolean;
 	customPiThinkingSpacingPatched?: boolean;
@@ -691,6 +695,22 @@ function thinkingTiming(message: AssistantMessage, completed: boolean): Thinking
 	return timing;
 }
 
+class AssistantBodyDividerComponent implements Component {
+	readonly customPiAssistantBodyDivider = true;
+
+	constructor(private readonly content: Component) {}
+
+	render(width: number): string[] {
+		const theme = footerTimerState().getTheme?.();
+		const divider = "─".repeat(Math.max(0, width));
+		return [theme?.fg("dim", divider) ?? divider, ...this.content.render(width)];
+	}
+
+	invalidate(): void {
+		this.content.invalidate?.();
+	}
+}
+
 class CollapsibleThinkingComponent implements Component {
 	constructor(
 		private readonly content: Component,
@@ -751,6 +771,9 @@ function applyAssistantContentSpacing(
 				!instance.hideThinkingBlock,
 				timing.durationMs,
 			);
+		} else if (run.kind === "body"
+			&& !(children[childIndex] as AssistantBodyDividerInstance).customPiAssistantBodyDivider) {
+			children[childIndex] = new AssistantBodyDividerComponent(children[childIndex]);
 		}
 		childIndex += 1;
 		if (run.kind === "body" && runs[runIndex + 1]?.kind === "thinking"
