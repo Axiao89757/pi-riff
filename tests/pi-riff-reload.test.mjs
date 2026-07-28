@@ -468,9 +468,7 @@ test("live collapsed Thinking and its following tool render on adjacent lines", 
 	assert.equal(bodyLines[bodyIndex + 1].trim(), "");
 });
 
-test("Thinking and tools stay contiguous while assistant body forms a separate block", async () => {
-	assert.equal(interactivePrototype.customPiToolGroupingV2Patched, true);
-	assert.equal(containerPrototype.customPiToolGroupBindingV2Patched, true);
+test("Thinking and tools stay contiguous while every file tool keeps its full relative path", async () => {
 	const toolStyle = customPiExtension.commands.get("tool-style");
 	await toolStyle.handler("command", { ui: { notify() {}, setToolsExpanded() {} } });
 	const chat = { chatContainer: { children: [] } };
@@ -521,9 +519,9 @@ test("Thinking and tools stay contiguous while assistant body forms a separate b
 	assert.notEqual(tools[0].render(100)[0], "");
 	assert.notEqual(tools[1].render(100)[0], "");
 	assert.match(details[0], /read src\/a\.ts/);
-	assert.match(details[1], /read \.\/b\.ts/);
-	assert.match(details[2], /edit \.\/c\.ts/);
-	assert.match(details[5], /read \.\/f\.ts/);
+	assert.match(details[1], /read src\/b\.ts/);
+	assert.match(details[2], /edit src\/c\.ts/);
+	assert.match(details[5], /read src\/f\.ts/);
 	assert.match(details[6], /read src\/g\.ts/);
 	assert.match(details[7], /read test\/g\.ts/);
 

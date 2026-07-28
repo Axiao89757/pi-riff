@@ -35,7 +35,7 @@ import {
 import { Type } from "typebox";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 
 // Global pi-riff behavior: compact tools, focused footer data, context title, and clipboard images.
 const MAX_CALL_LENGTH = 120;
@@ -147,9 +147,6 @@ type MinimalToolDisplayState = {
 	displayMode: ToolDisplayMode;
 	groupGeneration: number;
 	groupsAfterBody: Set<number>;
-	pathContextAbbreviations: number;
-	pathContextDirectory?: string;
-	pathContextGroup: number;
 	renderMinimal?: (instance: MinimalToolExecutionInstance, width: number) => string[];
 	runningTools: Set<MinimalToolExecutionInstance>;
 	spacedGroups: Set<number>;
@@ -158,7 +155,6 @@ type MinimalToolDisplayState = {
 type MinimalToolExecutionInstance = GenericToolExecutionInstance & {
 	args: Record<string, unknown>;
 	callRendererComponent?: Component;
-	customPiCommandPath?: string;
 	customPiToolGroup?: number;
 	cwd: string;
 	formatToolExecution(): string;
@@ -176,9 +172,6 @@ type MinimalToolPrototype = {
 type ContainerPrototype = {
 	addChild(component: Component): void;
 	customPiTimingEntrySpacingPatched?: boolean;
-	customPiToolGroupBindingPatched?: boolean;
-	customPiToolGroupBindingV2Patched?: boolean;
-	customPiToolPathContextPatched?: boolean;
 	render(width: number): string[];
 };
 
@@ -284,8 +277,6 @@ type InteractiveModeInstance = {
 
 type InteractiveModePrototype = {
 	customPiMarkdownThemePatched?: boolean;
-	customPiToolGroupingPatched?: boolean;
-	customPiToolGroupingV2Patched?: boolean;
 	customPiToolModeCyclingPatched?: boolean;
 	customPiUserImagesPatched?: boolean;
 	customPiUserImagesV2Patched?: boolean;
@@ -793,8 +784,6 @@ function minimalToolDisplayState(): MinimalToolDisplayState {
 		displayMode: "command",
 		groupGeneration: 0,
 		groupsAfterBody: new Set<number>(),
-		pathContextAbbreviations: 0,
-		pathContextGroup: 0,
 		runningTools: new Set<MinimalToolExecutionInstance>(),
 		spacedGroups: new Set<number>(),
 	};
@@ -802,8 +791,6 @@ function minimalToolDisplayState(): MinimalToolDisplayState {
 	state.collapsedStyle = state.displayMode === "compact" ? "compact" : "minimal";
 	state.groupGeneration ??= 0;
 	state.groupsAfterBody ??= new Set<number>();
-	state.pathContextAbbreviations ??= 0;
-	state.pathContextGroup ??= state.groupGeneration;
 	state.runningTools ??= new Set<MinimalToolExecutionInstance>();
 	state.spacedGroups ??= new Set<number>();
 	return state;
@@ -815,25 +802,6 @@ function setToolDisplayMode(mode: ToolDisplayMode): void {
 	state.collapsedStyle = mode === "compact" ? "compact" : "minimal";
 }
 
-function assistantHasVisibleBody(message: Pick<AssistantMessage, "content">): boolean {
-	return Array.isArray(message.content)
-		&& message.content.some((block) => block.type === "text" && Boolean(block.text?.trim()));
-}
-
-function beginMinimalToolGroup(message?: Pick<AssistantMessage, "content">): void {
-	const state = minimalToolDisplayState();
-	state.groupGeneration += 1;
-	state.pathContextAbbreviations = 0;
-	state.pathContextDirectory = undefined;
-	state.pathContextGroup = state.groupGeneration;
-	if (message && assistantHasVisibleBody(message)) state.groupsAfterBody.add(state.groupGeneration);
-}
-
-function markMinimalToolGroupAfterBody(message: Pick<AssistantMessage, "content">): void {
-	const state = minimalToolDisplayState();
-	if (assistantHasVisibleBody(message)) state.groupsAfterBody.add(state.groupGeneration);
-}
-
 function minimalPath(value: unknown, cwd: string): string {
 	if (typeof value !== "string" || !value) return "";
 	if (!isAbsolute(value)) return value;
@@ -841,67 +809,6 @@ function minimalPath(value: unknown, cwd: string): string {
 	const isInsideCwd = relativeToCwd === ""
 		|| (relativeToCwd !== ".." && !relativeToCwd.startsWith(`..${sep}`) && !isAbsolute(relativeToCwd));
 	return isInsideCwd ? relativeToCwd || "." : formatFooterCwd(value);
-}
-
-function bindMinimalToolPathContext(instance: MinimalToolExecutionInstance): void {
-	if (instance.customPiCommandPath !== undefined
-		|| (instance.toolName !== "read" && instance.toolName !== "edit" && instance.toolName !== "write")) return;
-
-	const path = minimalPath(instance.args?.path ?? instance.args?.file_path, instance.cwd);
-	if (!path) return;
-	const state = minimalToolDisplayState();
-	const group = instance.customPiToolGroup ?? state.groupGeneration;
-	if (state.pathContextGroup !== group) {
-		state.pathContextAbbreviations = 0;
-		state.pathContextDirectory = undefined;
-		state.pathContextGroup = group;
-	}
-
-	const directory = dirname(path);
-	const canReuse = directory === state.pathContextDirectory && state.pathContextAbbreviations < 5;
-	instance.customPiCommandPath = canReuse ? `.${sep}${basename(path)}` : path;
-	if (canReuse) state.pathContextAbbreviations += 1;
-	else {
-		state.pathContextAbbreviations = 0;
-		state.pathContextDirectory = directory;
-	}
-}
-
-function refreshMinimalToolPathContexts(components: Component[]): void {
-	let abbreviations = 0;
-	let directory: string | undefined;
-	let group: number | undefined;
-	for (const component of components) {
-		if (!(component instanceof ToolExecutionComponent)) continue;
-		const tool = component as unknown as MinimalToolExecutionInstance;
-		const toolGroup = tool.customPiToolGroup ?? minimalToolDisplayState().groupGeneration;
-		if (toolGroup !== group) {
-			abbreviations = 0;
-			directory = undefined;
-			group = toolGroup;
-		}
-		tool.customPiCommandPath = undefined;
-		if (tool.toolName !== "read" && tool.toolName !== "edit" && tool.toolName !== "write") {
-			abbreviations = 0;
-			directory = undefined;
-			continue;
-		}
-
-		const path = minimalPath(tool.args?.path ?? tool.args?.file_path, tool.cwd);
-		if (!path) {
-			abbreviations = 0;
-			directory = undefined;
-			continue;
-		}
-		const parent = dirname(path);
-		const canReuse = parent === directory && abbreviations < 5;
-		tool.customPiCommandPath = canReuse ? `.${sep}${basename(path)}` : path;
-		if (canReuse) abbreviations += 1;
-		else {
-			abbreviations = 0;
-			directory = parent;
-		}
-	}
 }
 
 function stripPassiveShellPrefixes(command: string): string {
@@ -1222,7 +1129,7 @@ function emphasizedPathRange(detail: string, path: string): [number, number] | u
 
 function minimalToolSummary(instance: MinimalToolExecutionInstance): MinimalToolSummary {
 	const args = instance.args ?? {};
-	const path = instance.customPiCommandPath ?? minimalPath(args.path ?? args.file_path, instance.cwd);
+	const path = minimalPath(args.path ?? args.file_path, instance.cwd);
 	switch (instance.toolName) {
 		case "bash": {
 			const detail = compactCommandPaths(args.command, instance.cwd);
@@ -1523,89 +1430,6 @@ function renderMinimalTool(instance: MinimalToolExecutionInstance, width: number
 		}
 	}
 	return lines;
-}
-
-function installMinimalToolGrouping(): void {
-	const containerPrototype = Container.prototype as unknown as ContainerPrototype;
-	if (!containerPrototype.customPiToolGroupBindingPatched) {
-		const addChild = containerPrototype.addChild;
-		containerPrototype.addChild = function (component) {
-			if (component instanceof ToolExecutionComponent) {
-				const tool = component as unknown as MinimalToolExecutionInstance;
-				tool.customPiToolGroup ??= minimalToolDisplayState().groupGeneration;
-			}
-			addChild.call(this, component);
-		};
-		Object.defineProperty(containerPrototype, "customPiToolGroupBindingPatched", {
-			value: true,
-			configurable: false,
-			writable: false,
-		});
-	}
-	if (!containerPrototype.customPiToolGroupBindingV2Patched) {
-		const addChildWithGroup = containerPrototype.addChild;
-		containerPrototype.addChild = function (component) {
-			if (component instanceof ToolExecutionComponent) {
-				const tool = component as unknown as MinimalToolExecutionInstance;
-				tool.customPiToolGroup ??= minimalToolDisplayState().groupGeneration;
-				bindMinimalToolPathContext(tool);
-			}
-			addChildWithGroup.call(this, component);
-		};
-		Object.defineProperty(containerPrototype, "customPiToolGroupBindingV2Patched", {
-			value: true,
-			configurable: false,
-			writable: false,
-		});
-	}
-	if (!containerPrototype.customPiToolPathContextPatched) {
-		const renderWithCurrentPaths = containerPrototype.render;
-		containerPrototype.render = function (width) {
-			const instance = this as unknown as { children?: Component[] };
-			refreshMinimalToolPathContexts(instance.children ?? []);
-			return renderWithCurrentPaths.call(this, width);
-		};
-		Object.defineProperty(containerPrototype, "customPiToolPathContextPatched", {
-			value: true,
-			configurable: false,
-			writable: false,
-		});
-	}
-
-	const prototype = InteractiveMode.prototype as unknown as InteractiveModePrototype;
-	if (!prototype.customPiToolGroupingPatched) {
-		const addMessageToChat = prototype.addMessageToChat;
-		prototype.addMessageToChat = function (message, options) {
-			if (message.role === "assistant") beginMinimalToolGroup({ content: message.content ?? [] });
-			addMessageToChat.call(this, message, options);
-		};
-		Object.defineProperty(prototype, "customPiToolGroupingPatched", {
-			value: true,
-			configurable: false,
-			writable: false,
-		});
-	}
-	if (!prototype.customPiToolGroupingV2Patched) {
-		const addGroupedMessage = prototype.addMessageToChat;
-		prototype.addMessageToChat = function (message, options) {
-			if (message.role !== "assistant") {
-				addGroupedMessage.call(this, message, options);
-				return;
-			}
-
-			const state = minimalToolDisplayState();
-			state.pathContextAbbreviations = 0;
-			state.pathContextDirectory = undefined;
-			state.pathContextGroup = state.groupGeneration + 1;
-			addGroupedMessage.call(this, message, options);
-			markMinimalToolGroupAfterBody({ content: message.content ?? [] });
-		};
-		Object.defineProperty(prototype, "customPiToolGroupingV2Patched", {
-			value: true,
-			configurable: false,
-			writable: false,
-		});
-	}
 }
 
 function compactTimingEntrySpacing(component: Component): void {
@@ -2620,7 +2444,6 @@ export default function (pi: ExtensionAPI) {
 	installLegacyToolMetadataHiding();
 	installMinimalToolRendering();
 	installToolDisplayModeCycling();
-	installMinimalToolGrouping();
 	installTimingEntrySpacing();
 	installAssistantPresentation();
 	installUserMessageTimestamps();
@@ -2857,19 +2680,13 @@ export default function (pi: ExtensionAPI) {
 	});
 
 
-	pi.on("message_start", (event) => {
-		if (event.message.role === "assistant") beginMinimalToolGroup(event.message as AssistantMessage);
-	});
-
 	pi.on("message_update", (event) => {
 		const message = event.message as AssistantMessage;
 		cleanThinkingBlocks(message);
-		if (message.role === "assistant") markMinimalToolGroupAfterBody(message);
 	});
 
 	pi.on("message_end", (event) => {
 		const message = event.message as AssistantMessage;
-		if (message.role === "assistant") markMinimalToolGroupAfterBody(message);
 		if (!cleanThinkingBlocks(message)) return;
 		return { message: event.message };
 	});
