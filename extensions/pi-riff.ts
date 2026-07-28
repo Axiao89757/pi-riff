@@ -698,28 +698,6 @@ function thinkingTiming(message: AssistantMessage, completed: boolean): Thinking
 	return timing;
 }
 
-class AssistantBodyRailComponent implements Component {
-	readonly customPiAssistantBodyRail = true;
-
-	constructor(readonly content: Component) {}
-
-	render(width: number): string[] {
-		const theme = footerTimerState().getTheme?.();
-		return this.content.render(width).map((line) => {
-			if (!theme || !line.replace(ANSI_SGR, "").startsWith(" ")) return line;
-			const paddingIndex = line.indexOf(" ");
-			if (paddingIndex < 0) return line;
-			return line.slice(0, paddingIndex)
-				+ theme.bg("selectedBg", " ")
-				+ line.slice(paddingIndex + 1);
-		});
-	}
-
-	invalidate(): void {
-		this.content.invalidate?.();
-	}
-}
-
 class CollapsibleThinkingComponent implements Component {
 	constructor(
 		private readonly content: Component,
@@ -769,9 +747,14 @@ function applyAssistantContentSpacing(
 	const timing = thinkingTiming(timingMessage, completed);
 	let childIndex = 0;
 	for (let runIndex = 0; runIndex < runs.length; runIndex++) {
-		while (children[childIndex] instanceof Spacer) childIndex += 1;
-		if (!children[childIndex]) break;
 		const run = runs[runIndex];
+		const spacerStart = childIndex;
+		while (children[childIndex] instanceof Spacer) childIndex += 1;
+		if (run.kind === "body") {
+			children.splice(spacerStart, childIndex - spacerStart, new Spacer(2));
+			childIndex = spacerStart + 1;
+		}
+		if (!children[childIndex]) break;
 		if (run.kind === "thinking" && !(children[childIndex] instanceof CollapsibleThinkingComponent)) {
 			children[childIndex] = new CollapsibleThinkingComponent(
 				children[childIndex],
@@ -782,12 +765,10 @@ function applyAssistantContentSpacing(
 			);
 		} else if (run.kind === "body") {
 			const body = children[childIndex] as AssistantBodyPresentationInstance;
-			if (!body.customPiAssistantBodyRail) {
-				// Unwrap presentation components retained by previous /reload versions.
-				const wrapped = body.customPiAssistantBodyDivider || body.customPiAssistantBodyFrame;
-				const content = wrapped && body.content ? body.content : body;
-				children[childIndex] = new AssistantBodyRailComponent(content);
-			}
+			const wrapped = body.customPiAssistantBodyDivider
+				|| body.customPiAssistantBodyFrame
+				|| body.customPiAssistantBodyRail;
+			if (wrapped && body.content) children[childIndex] = body.content;
 		}
 		childIndex += 1;
 		if (run.kind === "body" && runs[runIndex + 1]?.kind === "thinking"

@@ -392,10 +392,11 @@ test("Thinking follows native visibility independently from tool display mode", 
 	const mixedRawLines = mixed.render(100);
 	const mixedLines = mixedRawLines.map(stripTerminalControls);
 	const bodyIndex = mixedLines.findIndex((line) => line.includes("Assistant body"));
-	assert.ok(bodyIndex > 0);
+	assert.ok(bodyIndex > 1);
+	assert.equal(mixedLines[bodyIndex - 2].trim(), "");
 	assert.equal(mixedLines[bodyIndex - 1].trim(), "");
 	assert.equal(mixedLines[bodyIndex].trimEnd(), " Assistant body");
-	assert.ok(mixedRawLines[bodyIndex].includes(activeTheme.getBgAnsi("selectedBg")));
+	assert.equal(mixedRawLines[bodyIndex].includes(activeTheme.getBgAnsi("selectedBg")), false);
 	assert.equal(mixedLines[bodyIndex + 1].trim(), "");
 });
 
@@ -486,8 +487,10 @@ test("live collapsed Thinking and its following tool render on adjacent lines", 
 	const bodyLines = bodyRawLines.map(stripTerminalControls);
 	const bodyIndex = bodyLines.findIndex((line) => line.includes("Assistant explanation"));
 	const bodyToolIndex = bodyLines.findIndex((line) => line.includes("read") && line.includes("body.ts"));
+	assert.equal(bodyLines[bodyIndex - 2].trim(), "");
+	assert.equal(bodyLines[bodyIndex - 1].trim(), "");
 	assert.equal(bodyLines[bodyIndex].trimEnd(), " Assistant explanation");
-	assert.ok(bodyRawLines[bodyIndex].includes(activeTheme.getBgAnsi("selectedBg")));
+	assert.equal(bodyRawLines[bodyIndex].includes(activeTheme.getBgAnsi("selectedBg")), false);
 	assert.equal(bodyToolIndex, bodyIndex + 2, JSON.stringify(bodyLines));
 	assert.equal(bodyLines[bodyIndex + 1].trim(), "");
 });
