@@ -162,6 +162,22 @@ test("context title writes stay behind the agent tool", async () => {
 	]);
 });
 
+test("agent timing entries show turn and cumulative session duration", () => {
+	const renderer = customPiExtension.entryRenderers.get("compact-agent-timing");
+	assert.ok(renderer);
+	const component = renderer({
+		timestamp: new Date(2026, 6, 27, 17, 11).getTime(),
+		data: {
+			durationMs: 12_900,
+			totalDurationMs: 75_400,
+			completedAt: new Date(2026, 6, 27, 17, 11).getTime(),
+		},
+	}, {}, activeTheme);
+	assert.ok(component);
+	const line = stripTerminalControls(component.render(100)[0]).trimEnd();
+	assert.equal(line, "Took 12s | Total 1m 15s | 2026.7.27 17:11");
+});
+
 test("Friendly labels have no model configuration or sidecar runtime", () => {
 	assert.equal(customPiExtension.tools.has("set_riff_summary_model"), false);
 	assert.equal(customPiExtension.commands.has("riff-model"), false);

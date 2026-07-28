@@ -209,7 +209,31 @@ type AssistantMessagePrototype = {
 type AgentTimingEntry = {
 	durationMs: number;
 	completedAt?: number;
+	totalDurationMs?: number;
 };
+
+type AgentTimingSessionEntry = {
+	customType?: string;
+	data?: unknown;
+	timestamp: number | string;
+	type: string;
+};
+
+function cumulativeAgentDurations(entries: Iterable<AgentTimingSessionEntry>): {
+	byTimestamp: Map<number | string, number>;
+	totalDurationMs: number;
+} {
+	const byTimestamp = new Map<number | string, number>();
+	let totalDurationMs = 0;
+	for (const entry of entries) {
+		if (entry.type !== "custom" || entry.customType !== AGENT_TIMING_ENTRY) continue;
+		const timing = entry.data as AgentTimingEntry | undefined;
+		if (typeof timing?.durationMs !== "number" || !Number.isFinite(timing.durationMs)) continue;
+		totalDurationMs += Math.max(0, timing.durationMs);
+		byTimestamp.set(entry.timestamp, totalDurationMs);
+	}
+	return { byTimestamp, totalDurationMs };
+}
 
 type CtxTitleEntry = {
 	title: string | null;
@@ -2481,12 +2505,25 @@ export default function (pi: ExtensionAPI) {
 
 	let pendingAgentStartedAt: number | undefined;
 	let agentStartedAt: number | undefined;
+	let cumulativeAgentDurationMs = 0;
+	const cumulativeAgentDurationByTimestamp = new Map<number | string, number>();
 	let workingTimer: ReturnType<typeof setInterval> | undefined;
 	let workingTimerContext: ExtensionContext | undefined;
 
+	const restoreCumulativeAgentDuration = (ctx: ExtensionContext) => {
+		const restored = cumulativeAgentDurations(ctx.sessionManager.getBranch());
+		cumulativeAgentDurationMs = restored.totalDurationMs;
+		cumulativeAgentDurationByTimestamp.clear();
+		for (const [timestamp, durationMs] of restored.byTimestamp) {
+			cumulativeAgentDurationByTimestamp.set(timestamp, durationMs);
+		}
+	};
+
 	const refreshWorkingTimer = () => {
 		if (agentStartedAt === undefined || workingTimerContext?.mode !== "tui") return;
-		const message = `Working... ${formatWholeSeconds(performance.now() - agentStartedAt)}`;
+		const currentDurationMs = Math.max(0, performance.now() - agentStartedAt);
+		const message = `Working... ${formatWholeSeconds(currentDurationMs)}`
+			+ ` | Total ${formatWholeSeconds(cumulativeAgentDurationMs + currentDurationMs)}`;
 		workingTimerContext.ui.setWorkingMessage(
 			`${WORKING_HIGHLIGHT}${message}${ANSI_STYLE_RESET}`,
 		);
@@ -2572,9 +2609,14 @@ export default function (pi: ExtensionAPI) {
 	pi.registerEntryRenderer<AgentTimingEntry>(AGENT_TIMING_ENTRY, (entry, _options, theme) => {
 		const durationMs = entry.data?.durationMs;
 		if (typeof durationMs !== "number" || !Number.isFinite(durationMs)) return undefined;
+		const totalDurationMs = typeof entry.data?.totalDurationMs === "number"
+			&& Number.isFinite(entry.data.totalDurationMs)
+			? entry.data.totalDurationMs
+			: cumulativeAgentDurationByTimestamp.get(entry.timestamp);
+		const total = totalDurationMs === undefined ? "" : ` | Total ${formatWholeSeconds(totalDurationMs)}`;
 		const completedAt = formatLocalTimestamp(entry.data?.completedAt ?? entry.timestamp);
 		const timestamp = completedAt ? ` | ${completedAt}` : "";
-		return new Text(theme.fg("dim", `Took ${formatWholeSeconds(durationMs)}${timestamp}`), 0, 0);
+		return new Text(theme.fg("dim", `Took ${formatWholeSeconds(durationMs)}${total}${timestamp}`), 0, 0);
 	});
 
 	pi.on("input", (event) => {
@@ -2602,7 +2644,12 @@ export default function (pi: ExtensionAPI) {
 		stopWorkingTimer();
 		if (durationMs === undefined || ctx.mode !== "tui") return;
 
-		pi.appendEntry<AgentTimingEntry>(AGENT_TIMING_ENTRY, { durationMs, completedAt: Date.now() });
+		cumulativeAgentDurationMs += durationMs;
+		pi.appendEntry<AgentTimingEntry>(AGENT_TIMING_ENTRY, {
+			durationMs,
+			completedAt: Date.now(),
+			totalDurationMs: cumulativeAgentDurationMs,
+		});
 	});
 
 	pi.on("session_shutdown", (_event, ctx) => {
@@ -2614,6 +2661,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", (_event, ctx) => {
+		restoreCumulativeAgentDuration(ctx);
 		const toolState = minimalToolDisplayState();
 		toolState.groupGeneration = 0;
 		toolState.groupsAfterBody.clear();

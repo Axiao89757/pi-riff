@@ -10,7 +10,7 @@ Personal [Pi](https://pi.dev) extension for a compact, work-focused terminal UI.
 - Thinking follows Pi's native visibility toggle: current progress or timed step count when collapsed, full reasoning when expanded
 - Friendly labels are generated locally from tool names and arguments
 - No additional model requests, prompt changes, tool schema changes, or display metadata
-- Tool and agent timing
+- Per-turn and cumulative session Agent timing, restored across reloads
 - Full-width padded user message bands without boxed bubbles, with timestamps below the band
 - Clipboard image attachment, thumbnails, and expanded image display
 - Compact editor rail, footer identity, model statistics, and context title
