@@ -2522,8 +2522,8 @@ export default function (pi: ExtensionAPI) {
 	const refreshWorkingTimer = () => {
 		if (agentStartedAt === undefined || workingTimerContext?.mode !== "tui") return;
 		const currentDurationMs = Math.max(0, performance.now() - agentStartedAt);
-		const message = `Working... ${formatWholeSeconds(currentDurationMs)}`
-			+ ` | Total ${formatWholeSeconds(cumulativeAgentDurationMs + currentDurationMs)}`;
+		const message = `${formatWholeSeconds(currentDurationMs)}`
+			+ ` / ${formatWholeSeconds(cumulativeAgentDurationMs + currentDurationMs)}`;
 		workingTimerContext.ui.setWorkingMessage(
 			`${WORKING_HIGHLIGHT}${message}${ANSI_STYLE_RESET}`,
 		);
@@ -2613,10 +2613,10 @@ export default function (pi: ExtensionAPI) {
 			&& Number.isFinite(entry.data.totalDurationMs)
 			? entry.data.totalDurationMs
 			: cumulativeAgentDurationByTimestamp.get(entry.timestamp);
-		const total = totalDurationMs === undefined ? "" : ` | Total ${formatWholeSeconds(totalDurationMs)}`;
+		const total = totalDurationMs === undefined ? "" : ` / ${formatWholeSeconds(totalDurationMs)}`;
 		const completedAt = formatLocalTimestamp(entry.data?.completedAt ?? entry.timestamp);
 		const timestamp = completedAt ? ` | ${completedAt}` : "";
-		return new Text(theme.fg("dim", `Took ${formatWholeSeconds(durationMs)}${total}${timestamp}`), 0, 0);
+		return new Text(theme.fg("dim", `${formatWholeSeconds(durationMs)}${total}${timestamp}`), 0, 0);
 	});
 
 	pi.on("input", (event) => {

@@ -162,7 +162,7 @@ test("context title writes stay behind the agent tool", async () => {
 	]);
 });
 
-test("agent timing entries show turn and cumulative session duration", () => {
+test("agent timing entries show compact turn and cumulative duration", () => {
 	const renderer = customPiExtension.entryRenderers.get("compact-agent-timing");
 	assert.ok(renderer);
 	const component = renderer({
@@ -175,7 +175,7 @@ test("agent timing entries show turn and cumulative session duration", () => {
 	}, {}, activeTheme);
 	assert.ok(component);
 	const line = stripTerminalControls(component.render(100)[0]).trimEnd();
-	assert.equal(line, "Took 12s | Total 1m 15s | 2026.7.27 17:11");
+	assert.equal(line, "12s / 1m 15s | 2026.7.27 17:11");
 });
 
 test("Friendly labels have no model configuration or sidecar runtime", () => {
