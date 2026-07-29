@@ -704,16 +704,37 @@ function thinkingTiming(message: AssistantMessage, completed: boolean): Thinking
 class AssistantBodyStartComponent implements Component {
 	readonly customPiAssistantBodyStart = true;
 
-	constructor(readonly content: Component) {
+	constructor(
+		readonly content: Component,
+		private completed: boolean,
+	) {
 		assistantPresentationState().latestBodyStart = this;
+	}
+
+	setCompleted(completed: boolean): void {
+		this.completed = completed;
 	}
 
 	render(width: number): string[] {
 		const latest = assistantPresentationState().latestBodyStart === this;
-		const markerText = "─".repeat(Math.max(0, width));
-		const marker = latest && markerText
-			? `${CTX_TITLE_DIVIDER}${markerText}${ANSI_STYLE_RESET}`
-			: "";
+		const dividerWidth = Math.max(0, width);
+		let marker = "";
+		if (latest && dividerWidth > 0) {
+			if (this.completed) {
+				marker = `${CTX_TITLE_DIVIDER}${"─".repeat(dividerWidth)}${ANSI_STYLE_RESET}`;
+			} else {
+				const highlightWidth = Math.min(6, dividerWidth);
+				const travelWidth = Math.max(1, dividerWidth - highlightWidth + 1);
+				const highlightStart = Math.floor(performance.now() / 90) % travelWidth;
+				marker = CTX_TITLE_DIVIDER
+					+ "─".repeat(highlightStart)
+					+ WORKING_HIGHLIGHT
+					+ "━".repeat(highlightWidth)
+					+ CTX_TITLE_DIVIDER
+					+ "─".repeat(dividerWidth - highlightStart - highlightWidth)
+					+ ANSI_STYLE_RESET;
+			}
+		}
 		return [marker, ...this.content.render(width)];
 	}
 
@@ -789,12 +810,15 @@ function applyAssistantContentSpacing(
 			);
 		} else if (run.kind === "body") {
 			const body = children[childIndex] as AssistantBodyPresentationInstance;
-			if (!body.customPiAssistantBodyStart) {
+			if (body.customPiAssistantBodyStart) {
+				(body as AssistantBodyStartComponent).setCompleted(completed);
+				assistantPresentationState().latestBodyStart = body;
+			} else {
 				const wrapped = body.customPiAssistantBodyDivider
 					|| body.customPiAssistantBodyFrame
 					|| body.customPiAssistantBodyRail;
 				const content = wrapped && body.content ? body.content : body;
-				children[childIndex] = new AssistantBodyStartComponent(content);
+				children[childIndex] = new AssistantBodyStartComponent(content, completed);
 			}
 		}
 		childIndex += 1;
