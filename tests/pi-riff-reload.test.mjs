@@ -438,20 +438,23 @@ test("streaming assistant dividers request redraws until the output settles", as
 	});
 
 	const timestamp = Date.now() + 3;
-	const component = new AssistantMessageComponent({
-		role: "assistant",
-		timestamp,
-		content: [{ type: "text", text: "Streaming body" }],
-	});
-	await new Promise((resolve) => setTimeout(resolve, 220));
-	assert.ok(renderRequests >= 2, `expected autonomous redraws, got ${renderRequests}`);
-
-	component.updateContent({
+	const partialMessage = {
 		role: "assistant",
 		timestamp,
 		stopReason: "stop",
 		content: [{ type: "text", text: "Streaming body" }],
-	});
+	};
+	for (const handler of customPiExtension.handlers.get("message_start") ?? []) {
+		await handler({ type: "message_start", message: partialMessage }, {});
+	}
+	const component = new AssistantMessageComponent(partialMessage);
+	await new Promise((resolve) => setTimeout(resolve, 220));
+	assert.ok(renderRequests >= 2, `expected autonomous redraws, got ${renderRequests}`);
+
+	for (const handler of customPiExtension.handlers.get("message_end") ?? []) {
+		await handler({ type: "message_end", message: partialMessage }, {});
+	}
+	component.updateContent(partialMessage);
 	const settledRenderRequests = renderRequests;
 	await new Promise((resolve) => setTimeout(resolve, 140));
 	assert.equal(renderRequests, settledRenderRequests);

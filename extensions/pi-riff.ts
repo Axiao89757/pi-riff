@@ -190,6 +190,7 @@ type AssistantPresentationState = {
 	) => void;
 	latestBodyStart?: { isAnimating(): boolean };
 	requestRender?: () => void;
+	streamingMessageKey?: number | string | true;
 	styleAssistantLines?: (lines: string[]) => string[];
 	thinkingTimings?: WeakMap<object, ThinkingTiming>;
 	thinkingTimingsByTimestamp?: Map<number | string, ThinkingTiming>;
@@ -679,6 +680,14 @@ function assistantContentRuns(message: AssistantMessage): AssistantContentRun[] 
 	return runs;
 }
 
+function assistantMessageKey(message: AssistantMessage): number | string | true {
+	return message.timestamp ?? true;
+}
+
+function isAssistantMessageStreaming(message: AssistantMessage): boolean {
+	return assistantPresentationState().streamingMessageKey === assistantMessageKey(message);
+}
+
 function thinkingTiming(message: AssistantMessage, completed: boolean): ThinkingTiming {
 	const state = assistantPresentationState();
 	state.thinkingTimings ??= new WeakMap<object, ThinkingTiming>();
@@ -819,7 +828,9 @@ function applyAssistantContentSpacing(
 	const children = instance.contentContainer.children;
 	if (runs[0]?.kind === "thinking" && children[0] instanceof Spacer) children.shift();
 
-	const completed = typeof timingMessage.stopReason === "string" && Boolean(timingMessage.stopReason);
+	const completed = !isAssistantMessageStreaming(timingMessage)
+		&& typeof timingMessage.stopReason === "string"
+		&& Boolean(timingMessage.stopReason);
 	const timing = thinkingTiming(timingMessage, completed);
 	let childIndex = 0;
 	for (let runIndex = 0; runIndex < runs.length; runIndex++) {
@@ -2759,10 +2770,12 @@ export default function (pi: ExtensionAPI) {
 		stopMinimalToolAnimation();
 		stopAssistantDividerAnimation();
 		assistantPresentationState().requestRender = undefined;
+		assistantPresentationState().streamingMessageKey = undefined;
 		setCtxTitle(ctx, undefined, false);
 	});
 
 	pi.on("session_start", (_event, ctx) => {
+		assistantPresentationState().streamingMessageKey = undefined;
 		restoreCumulativeAgentDuration(ctx);
 		const toolState = minimalToolDisplayState();
 		toolState.groupGeneration = 0;
@@ -2833,13 +2846,26 @@ export default function (pi: ExtensionAPI) {
 	});
 
 
+	pi.on("message_start", (event) => {
+		const message = event.message as AssistantMessage;
+		if (message.role !== "assistant") return;
+		assistantPresentationState().streamingMessageKey = assistantMessageKey(message);
+	});
+
 	pi.on("message_update", (event) => {
 		const message = event.message as AssistantMessage;
+		if (message.role === "assistant") {
+			assistantPresentationState().streamingMessageKey = assistantMessageKey(message);
+		}
 		cleanThinkingBlocks(message);
 	});
 
 	pi.on("message_end", (event) => {
 		const message = event.message as AssistantMessage;
+		if (message.role === "assistant"
+			&& assistantPresentationState().streamingMessageKey === assistantMessageKey(message)) {
+			assistantPresentationState().streamingMessageKey = undefined;
+		}
 		if (!cleanThinkingBlocks(message)) return;
 		return { message: event.message };
 	});
