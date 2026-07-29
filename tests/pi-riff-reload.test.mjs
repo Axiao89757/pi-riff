@@ -176,8 +176,11 @@ test("agent timing entries show compact turn and cumulative duration", () => {
 		},
 	}, {}, activeTheme);
 	assert.ok(component);
-	const line = stripTerminalControls(component.render(100)[0]).trimEnd();
+	const rawLine = component.render(100)[0];
+	const line = stripTerminalControls(rawLine).trimEnd();
 	assert.equal(line, "12s / 1m 15s | 2026.7.27 17:11");
+	assert.ok(rawLine.includes("\x1b[1;38;2;109;40;217m12s\x1b[0m"));
+	assert.ok(rawLine.includes(activeTheme.getFgAnsi("dim")));
 });
 
 test("Friendly labels have no model configuration or sidecar runtime", () => {
@@ -394,7 +397,7 @@ test("Thinking follows native visibility independently from tool display mode", 
 	const bodyIndex = mixedLines.findIndex((line) => line.includes("Assistant body"));
 	assert.ok(bodyIndex > 1);
 	assert.equal(mixedLines[bodyIndex - 2].trim(), "");
-	assert.equal(mixedLines[bodyIndex - 1], "─".repeat(100));
+	assert.equal(mixedLines[bodyIndex - 1], `${" ".repeat(39)}${"─".repeat(21)}${" ".repeat(40)}`);
 	assert.ok(mixedRawLines[bodyIndex - 1].includes("\x1b[38;2;109;40;217m"));
 	assert.equal(mixedLines[bodyIndex].trimEnd(), " Assistant body");
 	assert.equal(mixedRawLines[bodyIndex].includes(activeTheme.getBgAnsi("selectedBg")), false);
@@ -406,14 +409,14 @@ test("Thinking follows native visibility independently from tool display mode", 
 		content: [{ type: "text", text: "Newer assistant body" }],
 	});
 	const newerRawLines = newerBody.render(100);
-	const newerMarker = newerRawLines.find((line) => /^[◐◓◑◒] ─{98}$/.test(stripTerminalControls(line)));
+	const newerMarker = newerRawLines.find((line) => /^ {39}─{10}[◐◓◑◒]─{10} {40}$/.test(stripTerminalControls(line)));
 	assert.ok(newerMarker?.includes("\x1b[38;2;109;40;217m"));
 	assert.ok(newerMarker?.includes("\x1b[1;38;2;196;132;252m"));
 	await new Promise((resolve) => setTimeout(resolve, 100));
 	assert.notEqual(stripTerminalControls(newerBody.render(100)[1]), stripTerminalControls(newerMarker));
-	assert.match(stripTerminalControls(newerBody.render(8)[1]), /^[◐◓◑◒] ─{6}$/);
+	assert.match(stripTerminalControls(newerBody.render(8)[1]), /^─{3}[◐◓◑◒]─{3} $/);
 	const historicalLines = mixed.render(100).map(stripTerminalControls);
-	assert.equal(historicalLines.includes("─".repeat(100)), false);
+	assert.equal(historicalLines.includes(`${" ".repeat(39)}${"─".repeat(21)}${" ".repeat(40)}`), false);
 	const historicalBodyIndex = historicalLines.findIndex((line) => line.includes("Assistant body"));
 	assert.equal(historicalLines[historicalBodyIndex - 1], "");
 	assert.match(historicalLines[historicalBodyIndex - 2], /First thought/);
@@ -424,7 +427,10 @@ test("Thinking follows native visibility independently from tool display mode", 
 		stopReason: "stop",
 		content: [{ type: "text", text: "Newer assistant body" }],
 	});
-	assert.equal(stripTerminalControls(newerBody.render(100)[1]), "─".repeat(100));
+	assert.equal(
+		stripTerminalControls(newerBody.render(100)[1]),
+		`${" ".repeat(39)}${"─".repeat(21)}${" ".repeat(40)}`,
+	);
 });
 
 test("native hidden-thinking mode collapses every consecutive thinking run", () => {
@@ -569,7 +575,7 @@ test("live collapsed Thinking and its following tool render on adjacent lines", 
 	const bodyIndex = bodyLines.findIndex((line) => line.includes("Assistant explanation"));
 	const bodyToolIndex = bodyLines.findIndex((line) => line.includes("read") && line.includes("body.ts"));
 	assert.equal(bodyLines[bodyIndex - 2].trim(), "");
-	assert.match(bodyLines[bodyIndex - 1], /^[◐◓◑◒] ─{98}$/);
+	assert.match(bodyLines[bodyIndex - 1], /^ {39}─{10}[◐◓◑◒]─{10} {40}$/);
 	assert.ok(bodyRawLines[bodyIndex - 1].includes("\x1b[38;2;109;40;217m"));
 	assert.ok(bodyRawLines[bodyIndex - 1].includes("\x1b[1;38;2;196;132;252m"));
 	assert.equal(bodyLines[bodyIndex].trimEnd(), " Assistant explanation");

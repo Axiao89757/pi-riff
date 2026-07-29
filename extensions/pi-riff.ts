@@ -53,6 +53,7 @@ const TOOL_GREEN = "\x1b[38;2;86;196;112m";
 const TOOL_GREEN_BOLD = "\x1b[1;38;2;86;196;112m";
 const CTX_TITLE_BADGE = "\x1b[1;38;2;255;255;255;48;2;109;40;217m";
 const CTX_TITLE_DIVIDER = "\x1b[38;2;109;40;217m";
+const CTX_TITLE_HIGHLIGHT = "\x1b[1;38;2;109;40;217m";
 const ANSI_STYLE_RESET = "\x1b[0m";
 const ANSI_DIM = "\x1b[2m";
 const ANSI_SGR = /\x1b\[[0-9;]*m/g;
@@ -762,16 +763,22 @@ class AssistantBodyStartComponent implements Component {
 		const dividerWidth = Math.max(0, width);
 		let marker = "";
 		if (dividerWidth > 0) {
+			const markerWidth = Math.min(21, dividerWidth % 2 === 0 ? dividerWidth - 1 : dividerWidth);
+			const leftPadding = Math.floor((dividerWidth - markerWidth) / 2);
+			const rightPadding = dividerWidth - markerWidth - leftPadding;
 			if (this.completed) {
-				marker = `${CTX_TITLE_DIVIDER}${"─".repeat(dividerWidth)}${ANSI_STYLE_RESET}`;
+				marker = " ".repeat(leftPadding)
+					+ `${CTX_TITLE_DIVIDER}${"─".repeat(markerWidth)}${ANSI_STYLE_RESET}`
+					+ " ".repeat(rightPadding);
 			} else {
 				const frameIndex = Math.floor(performance.now() / WORKING_SPINNER_INTERVAL_MS)
 					% SPINNER_GLYPHS.length;
-				const spinner = `${WORKING_HIGHLIGHT}${SPINNER_GLYPHS[frameIndex]}${ANSI_STYLE_RESET}`;
-				const separator = dividerWidth > 1 ? " " : "";
-				const line = "─".repeat(Math.max(0, dividerWidth - 2));
-				marker = spinner + separator
-					+ (line ? `${CTX_TITLE_DIVIDER}${line}${ANSI_STYLE_RESET}` : "");
+				const sideWidth = Math.floor(markerWidth / 2);
+				marker = " ".repeat(leftPadding)
+					+ `${CTX_TITLE_DIVIDER}${"─".repeat(sideWidth)}`
+					+ `${WORKING_HIGHLIGHT}${SPINNER_GLYPHS[frameIndex]}${ANSI_STYLE_RESET}`
+					+ `${CTX_TITLE_DIVIDER}${"─".repeat(sideWidth)}${ANSI_STYLE_RESET}`
+					+ " ".repeat(rightPadding);
 			}
 		}
 		return [marker, ...this.content.render(width)];
@@ -2725,7 +2732,9 @@ export default function (pi: ExtensionAPI) {
 		const total = totalDurationMs === undefined ? "" : ` / ${formatWholeSeconds(totalDurationMs)}`;
 		const completedAt = formatLocalTimestamp(entry.data?.completedAt ?? entry.timestamp);
 		const timestamp = completedAt ? ` | ${completedAt}` : "";
-		return new Text(theme.fg("dim", `${formatWholeSeconds(durationMs)}${total}${timestamp}`), 0, 0);
+		const turn = `${CTX_TITLE_HIGHLIGHT}${formatWholeSeconds(durationMs)}${ANSI_STYLE_RESET}`;
+		const metadata = total || timestamp ? theme.fg("dim", `${total}${timestamp}`) : "";
+		return new Text(turn + metadata, 0, 0);
 	});
 
 	pi.on("input", (event) => {
