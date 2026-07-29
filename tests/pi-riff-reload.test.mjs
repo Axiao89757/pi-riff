@@ -394,7 +394,7 @@ test("Thinking follows native visibility independently from tool display mode", 
 	const bodyIndex = mixedLines.findIndex((line) => line.includes("Assistant body"));
 	assert.ok(bodyIndex > 1);
 	assert.equal(mixedLines[bodyIndex - 2].trim(), "");
-	assert.equal(mixedLines[bodyIndex - 1], "━".repeat(100));
+	assert.equal(mixedLines[bodyIndex - 1], "─".repeat(100));
 	assert.ok(mixedRawLines[bodyIndex - 1].includes("\x1b[38;2;109;40;217m"));
 	assert.equal(mixedLines[bodyIndex].trimEnd(), " Assistant body");
 	assert.equal(mixedRawLines[bodyIndex].includes(activeTheme.getBgAnsi("selectedBg")), false);
@@ -406,14 +406,14 @@ test("Thinking follows native visibility independently from tool display mode", 
 		content: [{ type: "text", text: "Newer assistant body" }],
 	});
 	const newerRawLines = newerBody.render(100);
-	const newerMarker = newerRawLines.find((line) => /^[━ ]{100}$/.test(stripTerminalControls(line)));
+	const newerMarker = newerRawLines.find((line) => /^[◐◓◑◒] ─{98}$/.test(stripTerminalControls(line)));
 	assert.ok(newerMarker?.includes("\x1b[38;2;109;40;217m"));
-	assert.equal(stripTerminalControls(newerMarker).match(/━/g)?.length, 12);
-	await new Promise((resolve) => setTimeout(resolve, 200));
+	assert.ok(newerMarker?.includes("\x1b[1;38;2;196;132;252m"));
+	await new Promise((resolve) => setTimeout(resolve, 100));
 	assert.notEqual(stripTerminalControls(newerBody.render(100)[1]), stripTerminalControls(newerMarker));
-	assert.match(stripTerminalControls(newerBody.render(8)[1]), /^━{8}$/);
+	assert.match(stripTerminalControls(newerBody.render(8)[1]), /^[◐◓◑◒] ─{6}$/);
 	const historicalLines = mixed.render(100).map(stripTerminalControls);
-	assert.equal(historicalLines.includes("━".repeat(100)), false);
+	assert.equal(historicalLines.includes("─".repeat(100)), false);
 	const historicalBodyIndex = historicalLines.findIndex((line) => line.includes("Assistant body"));
 	assert.equal(historicalLines[historicalBodyIndex - 1], "");
 
@@ -423,7 +423,7 @@ test("Thinking follows native visibility independently from tool display mode", 
 		stopReason: "stop",
 		content: [{ type: "text", text: "Newer assistant body" }],
 	});
-	assert.equal(stripTerminalControls(newerBody.render(100)[1]), "━".repeat(100));
+	assert.equal(stripTerminalControls(newerBody.render(100)[1]), "─".repeat(100));
 });
 
 test("streaming assistant dividers request redraws until the output settles", async (t) => {
@@ -447,7 +447,7 @@ test("streaming assistant dividers request redraws until the output settles", as
 		await handler({ type: "message_start", message: partialMessage }, {});
 	}
 	const component = new AssistantMessageComponent(partialMessage);
-	await new Promise((resolve) => setTimeout(resolve, 420));
+	await new Promise((resolve) => setTimeout(resolve, 220));
 	assert.ok(renderRequests >= 2, `expected autonomous redraws, got ${renderRequests}`);
 
 	for (const handler of customPiExtension.handlers.get("message_end") ?? []) {
@@ -455,7 +455,7 @@ test("streaming assistant dividers request redraws until the output settles", as
 	}
 	component.updateContent(partialMessage);
 	const settledRenderRequests = renderRequests;
-	await new Promise((resolve) => setTimeout(resolve, 240));
+	await new Promise((resolve) => setTimeout(resolve, 140));
 	assert.equal(renderRequests, settledRenderRequests);
 });
 
@@ -547,10 +547,9 @@ test("live collapsed Thinking and its following tool render on adjacent lines", 
 	const bodyIndex = bodyLines.findIndex((line) => line.includes("Assistant explanation"));
 	const bodyToolIndex = bodyLines.findIndex((line) => line.includes("read") && line.includes("body.ts"));
 	assert.equal(bodyLines[bodyIndex - 2].trim(), "");
-	assert.match(bodyLines[bodyIndex - 1], /^[━ ]{100}$/);
-	assert.equal(bodyLines[bodyIndex - 1].match(/━/g)?.length, 12);
+	assert.match(bodyLines[bodyIndex - 1], /^[◐◓◑◒] ─{98}$/);
 	assert.ok(bodyRawLines[bodyIndex - 1].includes("\x1b[38;2;109;40;217m"));
-	assert.doesNotMatch(bodyRawLines[bodyIndex - 1], /\x1b\[1;38;2;196;132;252m/);
+	assert.ok(bodyRawLines[bodyIndex - 1].includes("\x1b[1;38;2;196;132;252m"));
 	assert.equal(bodyLines[bodyIndex].trimEnd(), " Assistant explanation");
 	assert.equal(bodyRawLines[bodyIndex].includes(activeTheme.getBgAnsi("selectedBg")), false);
 	assert.equal(bodyToolIndex, bodyIndex + 2, JSON.stringify(bodyLines));
