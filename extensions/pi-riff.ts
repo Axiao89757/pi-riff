@@ -51,6 +51,7 @@ const WORKING_HIGHLIGHT = "\x1b[1;38;2;196;132;252m";
 const TOOL_GREEN = "\x1b[38;2;86;196;112m";
 const TOOL_GREEN_BOLD = "\x1b[1;38;2;86;196;112m";
 const CTX_TITLE_BADGE = "\x1b[1;38;2;255;255;255;48;2;109;40;217m";
+const CTX_TITLE_DIVIDER = "\x1b[38;2;109;40;217m";
 const ANSI_STYLE_RESET = "\x1b[0m";
 const ANSI_DIM = "\x1b[2m";
 const ANSI_SGR = /\x1b\[[0-9;]*m/g;
@@ -709,9 +710,10 @@ class AssistantBodyStartComponent implements Component {
 
 	render(width: number): string[] {
 		const latest = assistantPresentationState().latestBodyStart === this;
-		const theme = footerTimerState().getTheme?.();
-		const markerText = width > 0 ? `▶${"═".repeat(Math.min(23, width - 1))}` : "";
-		const marker = latest ? theme?.fg("accent", markerText) ?? markerText : "";
+		const markerText = "─".repeat(Math.max(0, width));
+		const marker = latest && markerText
+			? `${CTX_TITLE_DIVIDER}${markerText}${ANSI_STYLE_RESET}`
+			: "";
 		return [marker, ...this.content.render(width)];
 	}
 

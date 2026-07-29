@@ -394,8 +394,8 @@ test("Thinking follows native visibility independently from tool display mode", 
 	const bodyIndex = mixedLines.findIndex((line) => line.includes("Assistant body"));
 	assert.ok(bodyIndex > 1);
 	assert.equal(mixedLines[bodyIndex - 2].trim(), "");
-	assert.equal(mixedLines[bodyIndex - 1], `▶${"═".repeat(23)}`);
-	assert.ok(mixedRawLines[bodyIndex - 1].includes(activeTheme.getFgAnsi("accent")));
+	assert.equal(mixedLines[bodyIndex - 1], "─".repeat(100));
+	assert.ok(mixedRawLines[bodyIndex - 1].includes("\x1b[38;2;109;40;217m"));
 	assert.equal(mixedLines[bodyIndex].trimEnd(), " Assistant body");
 	assert.equal(mixedRawLines[bodyIndex].includes(activeTheme.getBgAnsi("selectedBg")), false);
 	assert.equal(mixedLines[bodyIndex + 1].trim(), "");
@@ -406,11 +406,11 @@ test("Thinking follows native visibility independently from tool display mode", 
 		content: [{ type: "text", text: "Newer assistant body" }],
 	});
 	const newerRawLines = newerBody.render(100);
-	const newerMarker = newerRawLines.find((line) => stripTerminalControls(line) === `▶${"═".repeat(23)}`);
-	assert.ok(newerMarker?.includes(activeTheme.getFgAnsi("accent")));
-	assert.equal(stripTerminalControls(newerBody.render(8)[1]), `▶${"═".repeat(7)}`);
+	const newerMarker = newerRawLines.find((line) => stripTerminalControls(line) === "─".repeat(100));
+	assert.ok(newerMarker?.includes("\x1b[38;2;109;40;217m"));
+	assert.equal(stripTerminalControls(newerBody.render(8)[1]), "─".repeat(8));
 	const historicalLines = mixed.render(100).map(stripTerminalControls);
-	assert.equal(historicalLines.includes(`▶${"═".repeat(23)}`), false);
+	assert.equal(historicalLines.includes("─".repeat(100)), false);
 	const historicalBodyIndex = historicalLines.findIndex((line) => line.includes("Assistant body"));
 	assert.equal(historicalLines[historicalBodyIndex - 1], "");
 });
@@ -503,8 +503,8 @@ test("live collapsed Thinking and its following tool render on adjacent lines", 
 	const bodyIndex = bodyLines.findIndex((line) => line.includes("Assistant explanation"));
 	const bodyToolIndex = bodyLines.findIndex((line) => line.includes("read") && line.includes("body.ts"));
 	assert.equal(bodyLines[bodyIndex - 2].trim(), "");
-	assert.equal(bodyLines[bodyIndex - 1], `▶${"═".repeat(23)}`);
-	assert.ok(bodyRawLines[bodyIndex - 1].includes(activeTheme.getFgAnsi("accent")));
+	assert.equal(bodyLines[bodyIndex - 1], "─".repeat(100));
+	assert.ok(bodyRawLines[bodyIndex - 1].includes("\x1b[38;2;109;40;217m"));
 	assert.equal(bodyLines[bodyIndex].trimEnd(), " Assistant explanation");
 	assert.equal(bodyRawLines[bodyIndex].includes(activeTheme.getBgAnsi("selectedBg")), false);
 	assert.equal(bodyToolIndex, bodyIndex + 2, JSON.stringify(bodyLines));
