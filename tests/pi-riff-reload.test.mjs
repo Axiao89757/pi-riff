@@ -394,10 +394,23 @@ test("Thinking follows native visibility independently from tool display mode", 
 	const bodyIndex = mixedLines.findIndex((line) => line.includes("Assistant body"));
 	assert.ok(bodyIndex > 1);
 	assert.equal(mixedLines[bodyIndex - 2].trim(), "");
-	assert.equal(mixedLines[bodyIndex - 1].trim(), "");
+	assert.equal(mixedLines[bodyIndex - 1], "◆");
+	assert.ok(mixedRawLines[bodyIndex - 1].includes(activeTheme.getFgAnsi("accent")));
 	assert.equal(mixedLines[bodyIndex].trimEnd(), " Assistant body");
 	assert.equal(mixedRawLines[bodyIndex].includes(activeTheme.getBgAnsi("selectedBg")), false);
 	assert.equal(mixedLines[bodyIndex + 1].trim(), "");
+
+	const newerBody = new AssistantMessageComponent({
+		role: "assistant",
+		timestamp: Date.now() + 2,
+		content: [{ type: "text", text: "Newer assistant body" }],
+	});
+	const newerRawLines = newerBody.render(100);
+	const newerMarker = newerRawLines.find((line) => stripTerminalControls(line) === "◆");
+	assert.ok(newerMarker?.includes(activeTheme.getFgAnsi("accent")));
+	const historicalMarker = mixed.render(100)
+		.find((line) => stripTerminalControls(line) === "◆");
+	assert.ok(historicalMarker?.includes(activeTheme.getFgAnsi("dim")));
 });
 
 test("live collapsed Thinking and its following tool render on adjacent lines", async () => {
@@ -488,7 +501,8 @@ test("live collapsed Thinking and its following tool render on adjacent lines", 
 	const bodyIndex = bodyLines.findIndex((line) => line.includes("Assistant explanation"));
 	const bodyToolIndex = bodyLines.findIndex((line) => line.includes("read") && line.includes("body.ts"));
 	assert.equal(bodyLines[bodyIndex - 2].trim(), "");
-	assert.equal(bodyLines[bodyIndex - 1].trim(), "");
+	assert.equal(bodyLines[bodyIndex - 1], "◆");
+	assert.ok(bodyRawLines[bodyIndex - 1].includes(activeTheme.getFgAnsi("accent")));
 	assert.equal(bodyLines[bodyIndex].trimEnd(), " Assistant explanation");
 	assert.equal(bodyRawLines[bodyIndex].includes(activeTheme.getBgAnsi("selectedBg")), false);
 	assert.equal(bodyToolIndex, bodyIndex + 2, JSON.stringify(bodyLines));
