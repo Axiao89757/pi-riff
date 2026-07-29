@@ -47,6 +47,7 @@ const CTX_TITLE_STATUS_KEY = "ctx-title";
 const CTX_TITLE_ENTRY = "custom-pi-ctx-title";
 const AGENT_TIMING_ENTRY = "compact-agent-timing";
 const WORKING_TIMER_REFRESH_MS = 1000;
+const ASSISTANT_DIVIDER_FRAME_MS = 180;
 const WORKING_HIGHLIGHT = "\x1b[1;38;2;196;132;252m";
 const TOOL_GREEN = "\x1b[38;2;86;196;112m";
 const TOOL_GREEN_BOLD = "\x1b[1;38;2;86;196;112m";
@@ -732,11 +733,12 @@ function syncAssistantDividerAnimation(): void {
 			return;
 		}
 		current.requestRender();
-	}, 90);
+	}, ASSISTANT_DIVIDER_FRAME_MS);
 }
 
 class AssistantBodyStartComponent implements Component {
 	readonly customPiAssistantBodyStart = true;
+	private readonly startedAt = performance.now();
 
 	constructor(
 		readonly content: Component,
@@ -761,12 +763,16 @@ class AssistantBodyStartComponent implements Component {
 		let marker = "";
 		if (latest && dividerWidth > 0) {
 			if (this.completed) {
-				marker = `${CTX_TITLE_DIVIDER}${"─".repeat(dividerWidth)}${ANSI_STYLE_RESET}`;
+				marker = `${CTX_TITLE_DIVIDER}${"━".repeat(dividerWidth)}${ANSI_STYLE_RESET}`;
 			} else {
-				const phase = Math.floor(performance.now() / 90) % 3;
+				const trainWidth = Math.min(12, dividerWidth);
+				const trainStart = Math.floor(
+					(performance.now() - this.startedAt) / ASSISTANT_DIVIDER_FRAME_MS,
+				) % dividerWidth;
 				let train = "";
 				for (let column = 0; column < dividerWidth; column++) {
-					train += (column - phase + 3) % 3 === 0 ? "┄" : " ";
+					const distance = (column - trainStart + dividerWidth) % dividerWidth;
+					train += distance < trainWidth ? "━" : " ";
 				}
 				marker = `${CTX_TITLE_DIVIDER}${train}${ANSI_STYLE_RESET}`;
 			}
