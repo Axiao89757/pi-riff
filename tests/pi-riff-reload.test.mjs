@@ -427,6 +427,36 @@ test("Thinking follows native visibility independently from tool display mode", 
 	assert.equal(stripTerminalControls(newerBody.render(100)[1]), "─".repeat(100));
 });
 
+test("streaming assistant dividers request redraws until the output settles", async (t) => {
+	const state = globalThis[Symbol.for("pi.custom-pi.assistant-presentation-state")];
+	let renderRequests = 0;
+	state.requestRender = () => renderRequests++;
+	t.after(() => {
+		state.requestRender = undefined;
+		if (state.animationTimer !== undefined) clearInterval(state.animationTimer);
+		state.animationTimer = undefined;
+	});
+
+	const timestamp = Date.now() + 3;
+	const component = new AssistantMessageComponent({
+		role: "assistant",
+		timestamp,
+		content: [{ type: "text", text: "Streaming body" }],
+	});
+	await new Promise((resolve) => setTimeout(resolve, 220));
+	assert.ok(renderRequests >= 2, `expected autonomous redraws, got ${renderRequests}`);
+
+	component.updateContent({
+		role: "assistant",
+		timestamp,
+		stopReason: "stop",
+		content: [{ type: "text", text: "Streaming body" }],
+	});
+	const settledRenderRequests = renderRequests;
+	await new Promise((resolve) => setTimeout(resolve, 140));
+	assert.equal(renderRequests, settledRenderRequests);
+});
+
 test("live collapsed Thinking and its following tool render on adjacent lines", async () => {
 	const toolStyle = customPiExtension.commands.get("tool-style");
 	await toolStyle.handler("command", { ui: { notify() {}, setToolsExpanded() {} } });

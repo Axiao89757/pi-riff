@@ -182,12 +182,14 @@ type ThinkingTiming = {
 };
 
 type AssistantPresentationState = {
+	animationTimer?: ReturnType<typeof setInterval>;
 	applyContentSpacing?: (
 		instance: AssistantMessageInstance,
 		message: AssistantMessage,
 		timingMessage?: AssistantMessage,
 	) => void;
-	latestBodyStart?: object;
+	latestBodyStart?: { isAnimating(): boolean };
+	requestRender?: () => void;
 	styleAssistantLines?: (lines: string[]) => string[];
 	thinkingTimings?: WeakMap<object, ThinkingTiming>;
 	thinkingTimingsByTimestamp?: Map<number | string, ThinkingTiming>;
@@ -701,6 +703,29 @@ function thinkingTiming(message: AssistantMessage, completed: boolean): Thinking
 	return timing;
 }
 
+function stopAssistantDividerAnimation(): void {
+	const state = assistantPresentationState();
+	if (state.animationTimer !== undefined) clearInterval(state.animationTimer);
+	state.animationTimer = undefined;
+}
+
+function syncAssistantDividerAnimation(): void {
+	const state = assistantPresentationState();
+	if (!state.requestRender || !state.latestBodyStart?.isAnimating()) {
+		stopAssistantDividerAnimation();
+		return;
+	}
+	if (state.animationTimer !== undefined) return;
+	state.animationTimer = setInterval(() => {
+		const current = assistantPresentationState();
+		if (!current.requestRender || !current.latestBodyStart?.isAnimating()) {
+			stopAssistantDividerAnimation();
+			return;
+		}
+		current.requestRender();
+	}, 90);
+}
+
 class AssistantBodyStartComponent implements Component {
 	readonly customPiAssistantBodyStart = true;
 
@@ -709,10 +734,16 @@ class AssistantBodyStartComponent implements Component {
 		private completed: boolean,
 	) {
 		assistantPresentationState().latestBodyStart = this;
+		syncAssistantDividerAnimation();
+	}
+
+	isAnimating(): boolean {
+		return !this.completed;
 	}
 
 	setCompleted(completed: boolean): void {
 		this.completed = completed;
+		syncAssistantDividerAnimation();
 	}
 
 	render(width: number): string[] {
@@ -811,8 +842,8 @@ function applyAssistantContentSpacing(
 		} else if (run.kind === "body") {
 			const body = children[childIndex] as AssistantBodyPresentationInstance;
 			if (body.customPiAssistantBodyStart) {
+				assistantPresentationState().latestBodyStart = body as AssistantBodyStartComponent;
 				(body as AssistantBodyStartComponent).setCompleted(completed);
-				assistantPresentationState().latestBodyStart = body;
 			} else {
 				const wrapped = body.customPiAssistantBodyDivider
 					|| body.customPiAssistantBodyFrame
@@ -2726,6 +2757,8 @@ export default function (pi: ExtensionAPI) {
 		pendingAgentStartedAt = undefined;
 		stopWorkingTimer();
 		stopMinimalToolAnimation();
+		stopAssistantDividerAnimation();
+		assistantPresentationState().requestRender = undefined;
 		setCtxTitle(ctx, undefined, false);
 	});
 
@@ -2739,9 +2772,12 @@ export default function (pi: ExtensionAPI) {
 		footerTimerState().getTheme = () => activeTheme;
 		userMessageTimeState().getTheme = () => activeTheme;
 		ctx.ui.setWorkingIndicator({ frames: WORKING_SPINNER_FRAMES, intervalMs: 80 });
-		ctx.ui.setEditorComponent((tui, editorTheme, keybindings) =>
-			new CompactRailEditor(tui, editorTheme, keybindings),
-		);
+		ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => {
+			const assistantState = assistantPresentationState();
+			assistantState.requestRender = () => tui.requestRender();
+			syncAssistantDividerAnimation();
+			return new CompactRailEditor(tui, editorTheme, keybindings);
+		});
 		const restoredCtxTitle = restoreCtxTitle(ctx);
 		setCtxTitle(ctx, restoredCtxTitle.title, false, restoredCtxTitle.found);
 
