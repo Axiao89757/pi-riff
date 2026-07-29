@@ -710,7 +710,8 @@ class AssistantBodyStartComponent implements Component {
 	render(width: number): string[] {
 		const latest = assistantPresentationState().latestBodyStart === this;
 		const theme = footerTimerState().getTheme?.();
-		const marker = latest ? theme?.fg("accent", "✦-----") ?? "✦-----" : "";
+		const markerText = width > 0 ? `▶${"═".repeat(Math.min(23, width - 1))}` : "";
+		const marker = latest ? theme?.fg("accent", markerText) ?? markerText : "";
 		return [marker, ...this.content.render(width)];
 	}
 
