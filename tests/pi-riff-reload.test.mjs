@@ -416,6 +416,7 @@ test("Thinking follows native visibility independently from tool display mode", 
 	assert.equal(historicalLines.includes("─".repeat(100)), false);
 	const historicalBodyIndex = historicalLines.findIndex((line) => line.includes("Assistant body"));
 	assert.equal(historicalLines[historicalBodyIndex - 1], "");
+	assert.match(historicalLines[historicalBodyIndex - 2], /First thought/);
 
 	newerBody.updateContent({
 		role: "assistant",

@@ -758,9 +758,10 @@ class AssistantBodyStartComponent implements Component {
 
 	render(width: number): string[] {
 		const latest = assistantPresentationState().latestBodyStart === this;
+		if (!latest) return this.content.render(width);
 		const dividerWidth = Math.max(0, width);
 		let marker = "";
-		if (latest && dividerWidth > 0) {
+		if (dividerWidth > 0) {
 			if (this.completed) {
 				marker = `${CTX_TITLE_DIVIDER}${"─".repeat(dividerWidth)}${ANSI_STYLE_RESET}`;
 			} else {
