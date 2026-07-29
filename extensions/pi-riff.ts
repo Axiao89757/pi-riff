@@ -763,16 +763,12 @@ class AssistantBodyStartComponent implements Component {
 			if (this.completed) {
 				marker = `${CTX_TITLE_DIVIDER}${"─".repeat(dividerWidth)}${ANSI_STYLE_RESET}`;
 			} else {
-				const highlightWidth = Math.min(6, dividerWidth);
-				const travelWidth = Math.max(1, dividerWidth - highlightWidth + 1);
-				const highlightStart = Math.floor(performance.now() / 90) % travelWidth;
-				marker = CTX_TITLE_DIVIDER
-					+ "─".repeat(highlightStart)
-					+ WORKING_HIGHLIGHT
-					+ "━".repeat(highlightWidth)
-					+ CTX_TITLE_DIVIDER
-					+ "─".repeat(dividerWidth - highlightStart - highlightWidth)
-					+ ANSI_STYLE_RESET;
+				const phase = Math.floor(performance.now() / 90) % 3;
+				let train = "";
+				for (let column = 0; column < dividerWidth; column++) {
+					train += (column - phase + 3) % 3 === 0 ? "┄" : " ";
+				}
+				marker = `${CTX_TITLE_DIVIDER}${train}${ANSI_STYLE_RESET}`;
 			}
 		}
 		return [marker, ...this.content.render(width)];

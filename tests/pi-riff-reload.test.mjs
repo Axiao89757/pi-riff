@@ -406,13 +406,13 @@ test("Thinking follows native visibility independently from tool display mode", 
 		content: [{ type: "text", text: "Newer assistant body" }],
 	});
 	const newerRawLines = newerBody.render(100);
-	const newerMarker = newerRawLines.find((line) => /^[─━]{100}$/.test(stripTerminalControls(line)));
+	const newerMarker = newerRawLines.find((line) => /^[┄ ]{100}$/.test(stripTerminalControls(line)));
 	assert.ok(newerMarker?.includes("\x1b[38;2;109;40;217m"));
-	assert.ok(newerMarker?.includes("\x1b[1;38;2;196;132;252m"));
-	assert.match(stripTerminalControls(newerMarker), /━{6}/);
+	assert.doesNotMatch(newerMarker ?? "", /\x1b\[1;38;2;196;132;252m/);
+	assert.match(stripTerminalControls(newerMarker), /┄/);
 	await new Promise((resolve) => setTimeout(resolve, 100));
 	assert.notEqual(stripTerminalControls(newerBody.render(100)[1]), stripTerminalControls(newerMarker));
-	assert.match(stripTerminalControls(newerBody.render(8)[1]), /^[─━]{8}$/);
+	assert.match(stripTerminalControls(newerBody.render(8)[1]), /^[┄ ]{8}$/);
 	const historicalLines = mixed.render(100).map(stripTerminalControls);
 	assert.equal(historicalLines.includes("─".repeat(100)), false);
 	const historicalBodyIndex = historicalLines.findIndex((line) => line.includes("Assistant body"));
@@ -548,10 +548,10 @@ test("live collapsed Thinking and its following tool render on adjacent lines", 
 	const bodyIndex = bodyLines.findIndex((line) => line.includes("Assistant explanation"));
 	const bodyToolIndex = bodyLines.findIndex((line) => line.includes("read") && line.includes("body.ts"));
 	assert.equal(bodyLines[bodyIndex - 2].trim(), "");
-	assert.match(bodyLines[bodyIndex - 1], /^[─━]{100}$/);
-	assert.match(bodyLines[bodyIndex - 1], /━{6}/);
+	assert.match(bodyLines[bodyIndex - 1], /^[┄ ]{100}$/);
+	assert.match(bodyLines[bodyIndex - 1], /┄/);
 	assert.ok(bodyRawLines[bodyIndex - 1].includes("\x1b[38;2;109;40;217m"));
-	assert.ok(bodyRawLines[bodyIndex - 1].includes("\x1b[1;38;2;196;132;252m"));
+	assert.doesNotMatch(bodyRawLines[bodyIndex - 1], /\x1b\[1;38;2;196;132;252m/);
 	assert.equal(bodyLines[bodyIndex].trimEnd(), " Assistant explanation");
 	assert.equal(bodyRawLines[bodyIndex].includes(activeTheme.getBgAnsi("selectedBg")), false);
 	assert.equal(bodyToolIndex, bodyIndex + 2, JSON.stringify(bodyLines));
