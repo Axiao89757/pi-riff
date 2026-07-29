@@ -353,8 +353,8 @@ test("Thinking follows native visibility independently from tool display mode", 
 	};
 	const component = new AssistantMessageComponent(message, true);
 	let rendered = component.render(100).map(stripTerminalControls).join("\n");
-	assert.doesNotMatch(rendered, /Planning files|Inspecting dependencies/);
-	assert.match(rendered, /Running checks/);
+	assert.match(rendered, /Thinking\.\.\./);
+	assert.doesNotMatch(rendered, /Planning files|Inspecting dependencies|Running checks/);
 
 	const completedMessage = { ...message, stopReason: "stop" };
 	component.updateContent(completedMessage);
@@ -424,6 +424,27 @@ test("Thinking follows native visibility independently from tool display mode", 
 		content: [{ type: "text", text: "Newer assistant body" }],
 	});
 	assert.equal(stripTerminalControls(newerBody.render(100)[1]), "─".repeat(100));
+});
+
+test("native hidden-thinking mode collapses every consecutive thinking run", () => {
+	const message = {
+		role: "assistant",
+		timestamp: Date.now() + 2,
+		stopReason: "aborted",
+		content: [
+			{ type: "thinking", thinking: "**Planning Excel sheet structure and columns**" },
+			{ type: "thinking", thinking: "**Reviewing recent commits and routes**" },
+			{ type: "text", text: "Visible assistant body" },
+			{ type: "thinking", thinking: "**Confirming withdrawal and status project**" },
+			{ type: "thinking", thinking: "**Summarizing feature priorities**" },
+			{ type: "toolCall", id: "hidden-runs", name: "read", arguments: { path: "/tmp/file" } },
+		],
+	};
+	const component = new AssistantMessageComponent(message, true);
+	const rendered = component.render(100).map(stripTerminalControls).join("\n");
+	assert.match(rendered, /Visible assistant body/);
+	assert.doesNotMatch(rendered, /Planning Excel|Reviewing recent|Confirming withdrawal|Summarizing feature/);
+	assert.equal((rendered.match(/Thinking · 2 steps/g) ?? []).length, 2);
 });
 
 test("streaming assistant dividers request redraws until the output settles", async (t) => {

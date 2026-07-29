@@ -798,11 +798,10 @@ class CollapsibleThinkingComponent implements Component {
 		const theme = footerTimerState().getTheme?.();
 		const leadingPadding = visibleLines[0]?.replace(ANSI_SGR, "").match(/^\s*/)?.[0] ?? "";
 		if (!this.completed) {
-			const latest = this.thinking.split("\n").filter((line) => line.trim()).at(-1);
-			if (!latest) return [];
-			const styledLatest = theme?.italic(theme.fg("thinkingText", latest)) ?? latest;
+			const hiddenLabel = visibleLines[0];
+			if (!hiddenLabel) return [];
 			const ellipsis = theme?.italic(theme.fg("thinkingText", "...")) ?? "...";
-			return [truncateToWidth(leadingPadding + styledLatest, width, ellipsis, true)];
+			return [truncateToWidth(hiddenLabel, width, ellipsis, true)];
 		}
 
 		const steps = this.thinking.split("\n").filter((line) => line.trim()).length;
