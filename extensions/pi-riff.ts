@@ -763,7 +763,10 @@ class AssistantBodyStartComponent implements Component {
 		const dividerWidth = Math.max(0, width);
 		let marker = "";
 		if (dividerWidth > 0) {
-			const markerWidth = Math.min(41, dividerWidth % 2 === 0 ? dividerWidth - 1 : dividerWidth);
+			const proportionalWidth = Math.max(1, Math.round(dividerWidth * 0.6));
+			const markerWidth = proportionalWidth % 2 === 0
+				? proportionalWidth + (proportionalWidth < dividerWidth ? 1 : -1)
+				: proportionalWidth;
 			const leftPadding = Math.floor((dividerWidth - markerWidth) / 2);
 			const rightPadding = dividerWidth - markerWidth - leftPadding;
 			if (this.completed) {
