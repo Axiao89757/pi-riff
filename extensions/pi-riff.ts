@@ -763,7 +763,7 @@ class AssistantBodyStartComponent implements Component {
 		const dividerWidth = Math.max(0, width);
 		let marker = "";
 		if (dividerWidth > 0) {
-			const proportionalWidth = Math.max(1, Math.round(dividerWidth * 0.6));
+			const proportionalWidth = Math.max(1, Math.round(dividerWidth * 0.8));
 			const markerWidth = proportionalWidth % 2 === 0
 				? proportionalWidth + (proportionalWidth < dividerWidth ? 1 : -1)
 				: proportionalWidth;
@@ -771,16 +771,16 @@ class AssistantBodyStartComponent implements Component {
 			const rightPadding = dividerWidth - markerWidth - leftPadding;
 			if (this.completed) {
 				marker = " ".repeat(leftPadding)
-					+ `${CTX_TITLE_DIVIDER}${"─".repeat(markerWidth)}${ANSI_STYLE_RESET}`
+					+ `${CTX_TITLE_DIVIDER}${"━".repeat(markerWidth)}${ANSI_STYLE_RESET}`
 					+ " ".repeat(rightPadding);
 			} else {
 				const frameIndex = Math.floor(performance.now() / WORKING_SPINNER_INTERVAL_MS)
 					% SPINNER_GLYPHS.length;
 				const sideWidth = Math.floor(markerWidth / 2);
 				marker = " ".repeat(leftPadding)
-					+ `${CTX_TITLE_DIVIDER}${"─".repeat(sideWidth)}`
+					+ `${CTX_TITLE_DIVIDER}${"━".repeat(sideWidth)}`
 					+ `${WORKING_HIGHLIGHT}${SPINNER_GLYPHS[frameIndex]}${ANSI_STYLE_RESET}`
-					+ `${CTX_TITLE_DIVIDER}${"─".repeat(sideWidth)}${ANSI_STYLE_RESET}`
+					+ `${CTX_TITLE_DIVIDER}${"━".repeat(sideWidth)}${ANSI_STYLE_RESET}`
 					+ " ".repeat(rightPadding);
 			}
 		}

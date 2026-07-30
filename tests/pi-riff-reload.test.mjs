@@ -397,7 +397,7 @@ test("Thinking follows native visibility independently from tool display mode", 
 	const bodyIndex = mixedLines.findIndex((line) => line.includes("Assistant body"));
 	assert.ok(bodyIndex > 1);
 	assert.equal(mixedLines[bodyIndex - 2].trim(), "");
-	assert.equal(mixedLines[bodyIndex - 1], `${" ".repeat(19)}${"─".repeat(61)}${" ".repeat(20)}`);
+	assert.equal(mixedLines[bodyIndex - 1], `${" ".repeat(9)}${"━".repeat(81)}${" ".repeat(10)}`);
 	assert.ok(mixedRawLines[bodyIndex - 1].includes("\x1b[38;2;109;40;217m"));
 	assert.equal(mixedLines[bodyIndex].trimEnd(), " Assistant body");
 	assert.equal(mixedRawLines[bodyIndex].includes(activeTheme.getBgAnsi("selectedBg")), false);
@@ -409,15 +409,15 @@ test("Thinking follows native visibility independently from tool display mode", 
 		content: [{ type: "text", text: "Newer assistant body" }],
 	});
 	const newerRawLines = newerBody.render(100);
-	const newerMarker = newerRawLines.find((line) => /^ {19}─{30}[◐◓◑◒]─{30} {20}$/.test(stripTerminalControls(line)));
+	const newerMarker = newerRawLines.find((line) => /^ {9}━{40}[◐◓◑◒]━{40} {10}$/.test(stripTerminalControls(line)));
 	assert.ok(newerMarker?.includes("\x1b[38;2;109;40;217m"));
 	assert.ok(newerMarker?.includes("\x1b[1;38;2;196;132;252m"));
 	await new Promise((resolve) => setTimeout(resolve, 100));
 	assert.notEqual(stripTerminalControls(newerBody.render(100)[1]), stripTerminalControls(newerMarker));
-	assert.match(stripTerminalControls(newerBody.render(8)[1]), /^ ─{2}[◐◓◑◒]─{2} {2}$/);
-	assert.match(stripTerminalControls(newerBody.render(40)[1]), /^ {7}─{12}[◐◓◑◒]─{12} {8}$/);
+	assert.match(stripTerminalControls(newerBody.render(8)[1]), /^━{3}[◐◓◑◒]━{3} $/);
+	assert.match(stripTerminalControls(newerBody.render(40)[1]), /^ {3}━{16}[◐◓◑◒]━{16} {4}$/);
 	const historicalLines = mixed.render(100).map(stripTerminalControls);
-	assert.equal(historicalLines.includes(`${" ".repeat(19)}${"─".repeat(61)}${" ".repeat(20)}`), false);
+	assert.equal(historicalLines.includes(`${" ".repeat(9)}${"━".repeat(81)}${" ".repeat(10)}`), false);
 	const historicalBodyIndex = historicalLines.findIndex((line) => line.includes("Assistant body"));
 	assert.equal(historicalLines[historicalBodyIndex - 1], "");
 	assert.match(historicalLines[historicalBodyIndex - 2], /First thought/);
@@ -430,7 +430,7 @@ test("Thinking follows native visibility independently from tool display mode", 
 	});
 	assert.equal(
 		stripTerminalControls(newerBody.render(100)[1]),
-		`${" ".repeat(19)}${"─".repeat(61)}${" ".repeat(20)}`,
+		`${" ".repeat(9)}${"━".repeat(81)}${" ".repeat(10)}`,
 	);
 });
 
@@ -576,7 +576,7 @@ test("live collapsed Thinking and its following tool render on adjacent lines", 
 	const bodyIndex = bodyLines.findIndex((line) => line.includes("Assistant explanation"));
 	const bodyToolIndex = bodyLines.findIndex((line) => line.includes("read") && line.includes("body.ts"));
 	assert.equal(bodyLines[bodyIndex - 2].trim(), "");
-	assert.match(bodyLines[bodyIndex - 1], /^ {19}─{30}[◐◓◑◒]─{30} {20}$/);
+	assert.match(bodyLines[bodyIndex - 1], /^ {9}━{40}[◐◓◑◒]━{40} {10}$/);
 	assert.ok(bodyRawLines[bodyIndex - 1].includes("\x1b[38;2;109;40;217m"));
 	assert.ok(bodyRawLines[bodyIndex - 1].includes("\x1b[1;38;2;196;132;252m"));
 	assert.equal(bodyLines[bodyIndex].trimEnd(), " Assistant explanation");
