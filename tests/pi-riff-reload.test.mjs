@@ -131,37 +131,80 @@ const loaded = await loadExtensions([extensionPath], repositoryRoot);
 assert.deepEqual(loaded.errors, []);
 const customPiExtension = loaded.extensions.find((extension) => extension.resolvedPath === extensionPath);
 assert.ok(customPiExtension);
-assert.equal(footerPrototype.compactCtxTitleStatusLinePatched, true);
+assert.equal(footerPrototype.compactSessionIdentityPatched, true);
 
 const stripTerminalControls = (line) => line
 	.replace(/\x1b\]133;[ABC]\x07/g, "")
 	.replace(/\x1b\[[0-9;]*m/g, "");
 
-test("context title writes stay behind the agent tool", async () => {
-	const command = customPiExtension.commands.get("ctx-title");
+test("Pi session name is the only title source", () => {
 	const tool = customPiExtension.tools.get("set_ctx_title");
-	assert.ok(command);
 	assert.ok(tool);
+	assert.equal(customPiExtension.commands.has("ctx-title"), false);
 	assert.equal(customPiExtension.commands.has("workspace-context"), false);
 	assert.equal(customPiExtension.tools.has("set_workspace_context"), false);
 	assert.equal("title" in tool.definition.parameters.properties, true);
 	assert.equal("intent" in tool.definition.parameters.properties, false);
 	assert.equal((tool.definition.parameters.required ?? []).includes("intent"), false);
 	assert.equal("status" in tool.definition.parameters.properties, false);
-	assert.equal(command.description, "Show or clear the stable parent context title and session display name");
+	assert.match(tool.definition.description, /Pi's native session display name/);
 	assert.match(tool.definition.description, /active project's instructions/);
 
-	const notifications = [];
-	const ctx = { ui: { notify: (message, level) => notifications.push({ message, level }) } };
-	await command.handler("", ctx);
-	await command.handler("update", ctx);
-	await command.handler("wt:manual override", ctx);
+	const source = readFileSync(extensionPath, "utf8");
+	assert.doesNotMatch(source, /registerCommand\("ctx-title"/);
+	assert.doesNotMatch(source, /appendEntry<CtxTitleEntry>/);
+	assert.doesNotMatch(source, /setStatus\(CTX_TITLE_STATUS_KEY/);
+});
 
-	assert.deepEqual(notifications, [
-		{ message: "Context title: unset", level: "info" },
-		{ message: "Usage: /ctx-title [clear]", level: "error" },
-		{ message: "Usage: /ctx-title [clear]", level: "error" },
-	]);
+test("legacy context titles migrate once into Pi's native session name", () => {
+	const script = `
+		import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+		import { tmpdir } from "node:os";
+		import { join } from "node:path";
+		import { pathToFileURL } from "node:url";
+		const agentDir = mkdtempSync(join(tmpdir(), "pi-riff-name-"));
+		mkdirSync(join(agentDir, "extensions"));
+		symlinkSync(${JSON.stringify(extensionPath)}, join(agentDir, "extensions", "pi-riff.ts"));
+		const { createAgentSession } = await import(pathToFileURL(join(${JSON.stringify(piRoot)}, "dist", "core", "sdk.js")).href);
+		const { SessionManager } = await import(pathToFileURL(join(${JSON.stringify(piRoot)}, "dist", "core", "session-manager.js")).href);
+		const manager = SessionManager.inMemory(${JSON.stringify(repositoryRoot)});
+		manager.appendCustomEntry("custom-pi-ctx-title", { title: "Legacy title" });
+		const { session, extensionsResult } = await createAgentSession({
+			cwd: ${JSON.stringify(repositoryRoot)},
+			agentDir,
+			sessionManager: manager,
+		});
+		const ui = new Proxy({ theme: {}, getToolsExpanded: () => false }, {
+			get: (target, property) => property in target ? target[property] : () => undefined,
+		});
+		try {
+			await session.bindExtensions({ mode: "rpc", uiContext: ui });
+			const migratedName = session.sessionName;
+			const extension = extensionsResult.extensions.find((candidate) => candidate.tools.has("set_ctx_title"));
+			await extension.tools.get("set_ctx_title").definition.execute(
+				"set-name", { title: "Native title" }, undefined, undefined, {},
+			);
+			console.log(JSON.stringify({
+				migratedName,
+				updatedName: session.sessionName,
+				legacyEntryCount: manager.getEntries().filter(
+					(entry) => entry.type === "custom" && entry.customType === "custom-pi-ctx-title",
+				).length,
+			}));
+		} finally {
+			session.dispose();
+			rmSync(agentDir, { recursive: true, force: true });
+		}
+	`;
+	const result = JSON.parse(execFileSync(process.execPath, ["--input-type=module"], {
+		encoding: "utf8",
+		input: script,
+	}));
+	assert.deepEqual(result, {
+		migratedName: "Legacy title",
+		updatedName: "Native title",
+		legacyEntryCount: 1,
+	});
 });
 
 test("agent timing entries show compact turn and cumulative duration", () => {
