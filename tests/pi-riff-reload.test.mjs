@@ -225,6 +225,10 @@ test("active Agent timing uses yellow while completed turns stay purple", async 
 	assert.match(stripTerminalControls(activeMessage), /^\d+(?:\.\d)?s \/ \d+(?:\.\d)?s$/);
 	assert.ok(activeMessage.includes("\x1b[1;38;2;251;191;36m"));
 	assert.doesNotMatch(activeMessage, /\x1b\[[0-9;]*48;2/);
+	const source = readFileSync(extensionPath, "utf8");
+	assert.match(source, /ACTIVE_SPINNER_GLYPHS = \["◆", "◇"\]/);
+	assert.match(source, /WORKING_SPINNER_FRAMES = ACTIVE_SPINNER_GLYPHS/);
+	assert.match(source, /intervalMs: ACTIVE_SPINNER_INTERVAL_MS/);
 	assert.equal(messages.at(-1), undefined);
 });
 
