@@ -48,6 +48,7 @@ const AGENT_TIMING_ENTRY = "compact-agent-timing";
 const WORKING_TIMER_REFRESH_MS = 1000;
 const WORKING_SPINNER_INTERVAL_MS = 80;
 const WORKING_HIGHLIGHT = "\x1b[1;38;2;196;132;252m";
+const ACTIVE_WORKING_BADGE = "\x1b[1;38;2;255;255;255;48;2;126;34;206m";
 const TOOL_GREEN = "\x1b[38;2;86;196;112m";
 const TOOL_GREEN_BOLD = "\x1b[1;38;2;86;196;112m";
 const CTX_TITLE_BADGE = "\x1b[1;38;2;255;255;255;48;2;109;40;217m";
@@ -59,7 +60,7 @@ const ANSI_SGR = /\x1b\[[0-9;]*m/g;
 const SPINNER_GLYPHS = ["◐", "◓", "◑", "◒"] as const;
 const TOOL_DISPLAY_MODES = ["full", "compact", "command", "friendly"] as const;
 const WORKING_SPINNER_FRAMES = SPINNER_GLYPHS
-	.map((frame) => `${WORKING_HIGHLIGHT}${frame}${ANSI_STYLE_RESET}`);
+	.map((frame) => `${ACTIVE_WORKING_BADGE} ${frame} ${ANSI_STYLE_RESET}`);
 const MAX_CLIPBOARD_IMAGE_BYTES = 20 * 1024 * 1024;
 const FOOTER_TIMER_STATE = Symbol.for("pi.custom-pi.footer-timer");
 // Reuse state created by the previous filename during an in-process /reload.
@@ -2592,7 +2593,7 @@ export default function (pi: ExtensionAPI) {
 		const message = `${formatWholeSeconds(currentDurationMs)}`
 			+ ` / ${formatWholeSeconds(cumulativeAgentDurationMs + currentDurationMs)}`;
 		workingTimerContext.ui.setWorkingMessage(
-			`${WORKING_HIGHLIGHT}${message}${ANSI_STYLE_RESET}`,
+			`${ACTIVE_WORKING_BADGE} ACTIVE ${message} ${ANSI_STYLE_RESET}`,
 		);
 	};
 

@@ -207,6 +207,26 @@ test("legacy context titles migrate once into Pi's native session name", () => {
 	});
 });
 
+test("active Agent timing uses a solid high-contrast badge", async () => {
+	const messages = [];
+	const ctx = {
+		mode: "tui",
+		ui: { setWorkingMessage: (message) => messages.push(message) },
+	};
+	const agentStart = customPiExtension.handlers.get("agent_start")?.[0];
+	const sessionShutdown = customPiExtension.handlers.get("session_shutdown")?.[0];
+	assert.ok(agentStart);
+	assert.ok(sessionShutdown);
+	await agentStart({}, ctx);
+	await sessionShutdown({}, ctx);
+
+	const activeMessage = messages.find((message) => typeof message === "string");
+	assert.ok(activeMessage);
+	assert.match(stripTerminalControls(activeMessage), /^ ACTIVE \d+(?:\.\d)?s \/ \d+(?:\.\d)?s $/);
+	assert.ok(activeMessage.includes("\x1b[1;38;2;255;255;255;48;2;126;34;206m"));
+	assert.equal(messages.at(-1), undefined);
+});
+
 test("agent timing entries show compact turn and cumulative duration", () => {
 	const renderer = customPiExtension.entryRenderers.get("compact-agent-timing");
 	assert.ok(renderer);
