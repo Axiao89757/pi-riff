@@ -47,7 +47,6 @@ const LEGACY_CTX_TITLE_ENTRY = "custom-pi-ctx-title";
 const AGENT_TIMING_ENTRY = "compact-agent-timing";
 const WORKING_TIMER_REFRESH_MS = 1000;
 const WORKING_SPINNER_INTERVAL_MS = 80;
-const ACTIVE_SPINNER_INTERVAL_MS = 240;
 const WORKING_HIGHLIGHT = "\x1b[1;38;2;196;132;252m";
 const ACTIVE_TIMING_HIGHLIGHT = "\x1b[1;38;2;251;191;36m";
 const TOOL_GREEN = "\x1b[38;2;86;196;112m";
@@ -56,13 +55,14 @@ const CTX_TITLE_BADGE = "\x1b[1;38;2;255;255;255;48;2;109;40;217m";
 const CTX_TITLE_DIVIDER = "\x1b[38;2;109;40;217m";
 const CTX_TITLE_HIGHLIGHT = "\x1b[1;38;2;109;40;217m";
 const ANSI_STYLE_RESET = "\x1b[0m";
+const ANSI_SUPERSCRIPT = "\x1b[73m";
+const ANSI_BASELINE = "\x1b[75m";
 const ANSI_DIM = "\x1b[2m";
 const ANSI_SGR = /\x1b\[[0-9;]*m/g;
 const SPINNER_GLYPHS = ["◐", "◓", "◑", "◒"] as const;
-const ACTIVE_SPINNER_GLYPHS = ["◆", "◇"] as const;
 const TOOL_DISPLAY_MODES = ["full", "compact", "command", "friendly"] as const;
-const WORKING_SPINNER_FRAMES = ACTIVE_SPINNER_GLYPHS
-	.map((frame) => `${ACTIVE_TIMING_HIGHLIGHT}${frame}${ANSI_STYLE_RESET}`);
+const WORKING_SPINNER_FRAMES = SPINNER_GLYPHS
+	.map((frame) => `${ACTIVE_TIMING_HIGHLIGHT}${ANSI_SUPERSCRIPT}${frame}${ANSI_BASELINE}${ANSI_STYLE_RESET}`);
 const MAX_CLIPBOARD_IMAGE_BYTES = 20 * 1024 * 1024;
 const FOOTER_TIMER_STATE = Symbol.for("pi.custom-pi.footer-timer");
 // Reuse state created by the previous filename during an in-process /reload.
@@ -2707,7 +2707,7 @@ export default function (pi: ExtensionAPI) {
 		const activeTheme = ctx.ui.theme;
 		footerTimerState().getTheme = () => activeTheme;
 		userMessageTimeState().getTheme = () => activeTheme;
-		ctx.ui.setWorkingIndicator({ frames: WORKING_SPINNER_FRAMES, intervalMs: ACTIVE_SPINNER_INTERVAL_MS });
+		ctx.ui.setWorkingIndicator({ frames: WORKING_SPINNER_FRAMES, intervalMs: WORKING_SPINNER_INTERVAL_MS });
 		ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => {
 			const assistantState = assistantPresentationState();
 			assistantState.requestRender = () => tui.requestRender();
