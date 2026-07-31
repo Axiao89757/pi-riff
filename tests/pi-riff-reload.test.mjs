@@ -207,7 +207,7 @@ test("legacy context titles migrate once into Pi's native session name", () => {
 	});
 });
 
-test("active Agent timing uses a solid high-contrast badge", async () => {
+test("active Agent timing stays bright without a background badge", async () => {
 	const messages = [];
 	const ctx = {
 		mode: "tui",
@@ -222,8 +222,9 @@ test("active Agent timing uses a solid high-contrast badge", async () => {
 
 	const activeMessage = messages.find((message) => typeof message === "string");
 	assert.ok(activeMessage);
-	assert.match(stripTerminalControls(activeMessage), /^ ACTIVE \d+(?:\.\d)?s \/ \d+(?:\.\d)?s $/);
-	assert.ok(activeMessage.includes("\x1b[1;38;2;255;255;255;48;2;126;34;206m"));
+	assert.match(stripTerminalControls(activeMessage), /^\d+(?:\.\d)?s \/ \d+(?:\.\d)?s$/);
+	assert.ok(activeMessage.includes("\x1b[1;38;2;196;132;252m"));
+	assert.doesNotMatch(activeMessage, /\x1b\[[0-9;]*48;2/);
 	assert.equal(messages.at(-1), undefined);
 });
 
@@ -242,8 +243,9 @@ test("agent timing entries show compact turn and cumulative duration", () => {
 	const rawLine = component.render(100)[0];
 	const line = stripTerminalControls(rawLine).trimEnd();
 	assert.equal(line, "12s / 1m 15s | 2026.7.27 17:11");
-	assert.ok(rawLine.includes("\x1b[1;38;2;109;40;217m12s\x1b[0m"));
+	assert.ok(rawLine.includes(activeTheme.getFgAnsi("muted")));
 	assert.ok(rawLine.includes(activeTheme.getFgAnsi("dim")));
+	assert.doesNotMatch(rawLine, /\x1b\[1;38;2;109;40;217m12s/);
 });
 
 test("Friendly labels have no model configuration or sidecar runtime", () => {
