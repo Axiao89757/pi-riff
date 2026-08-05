@@ -169,6 +169,8 @@ test("legacy context titles migrate once into Pi's native session name", () => {
 		const { SessionManager } = await import(pathToFileURL(join(${JSON.stringify(piRoot)}, "dist", "core", "session-manager.js")).href);
 		const manager = SessionManager.inMemory(${JSON.stringify(repositoryRoot)});
 		manager.appendCustomEntry("custom-pi-ctx-title", { title: "Legacy title" });
+		manager.appendCustomEntry("compact-agent-timing", { durationMs: 1_000, totalDurationMs: 1_000 });
+		manager.appendCustomEntry("compact-agent-timing", { durationMs: 2_000, totalDurationMs: 3_000 });
 		const { session, extensionsResult } = await createAgentSession({
 			cwd: ${JSON.stringify(repositoryRoot)},
 			agentDir,
@@ -181,11 +183,18 @@ test("legacy context titles migrate once into Pi's native session name", () => {
 			await session.bindExtensions({ mode: "rpc", uiContext: ui });
 			const migratedName = session.sessionName;
 			const extension = extensionsResult.extensions.find((candidate) => candidate.tools.has("set_ctx_title"));
+			const oldTimingEntry = manager.getEntries().filter(
+				(entry) => entry.type === "custom" && entry.customType === "compact-agent-timing",
+			).at(-1);
+			const inferredTiming = extension.entryRenderers.get("compact-agent-timing")(
+				oldTimingEntry, {}, { fg: (_color, text) => text },
+			).render(100)[0].replace(/\\x1b\\[[0-9;]*m/g, "").trimEnd().split(" | ")[0];
 			await extension.tools.get("set_ctx_title").definition.execute(
 				"set-name", { title: "Native title" }, undefined, undefined, {},
 			);
 			console.log(JSON.stringify({
 				migratedName,
+				inferredTiming,
 				updatedName: session.sessionName,
 				legacyEntryCount: manager.getEntries().filter(
 					(entry) => entry.type === "custom" && entry.customType === "custom-pi-ctx-title",
@@ -202,6 +211,7 @@ test("legacy context titles migrate once into Pi's native session name", () => {
 	}));
 	assert.deepEqual(result, {
 		migratedName: "Legacy title",
+		inferredTiming: "第 2 轮 · 2s / 3s",
 		updatedName: "Native title",
 		legacyEntryCount: 1,
 	});
@@ -222,7 +232,7 @@ test("active Agent timing uses yellow while completed turns stay purple", async 
 
 	const activeMessage = messages.find((message) => typeof message === "string");
 	assert.ok(activeMessage);
-	assert.match(stripTerminalControls(activeMessage), /^\d+(?:\.\d)?s \/ \d+(?:\.\d)?s$/);
+	assert.match(stripTerminalControls(activeMessage), /^第 1 轮 · \d+(?:\.\d)?s \/ \d+(?:\.\d)?s$/);
 	assert.ok(activeMessage.includes("\x1b[1;38;2;251;191;36m"));
 	assert.doesNotMatch(activeMessage, /\x1b\[[0-9;]*48;2/);
 	const source = readFileSync(extensionPath, "utf8");
@@ -239,6 +249,7 @@ test("agent timing entries show compact turn and cumulative duration", () => {
 	const component = renderer({
 		timestamp: new Date(2026, 6, 27, 17, 11).getTime(),
 		data: {
+			round: 4,
 			durationMs: 12_900,
 			totalDurationMs: 75_400,
 			completedAt: new Date(2026, 6, 27, 17, 11).getTime(),
@@ -247,8 +258,8 @@ test("agent timing entries show compact turn and cumulative duration", () => {
 	assert.ok(component);
 	const rawLine = component.render(100)[0];
 	const line = stripTerminalControls(rawLine).trimEnd();
-	assert.equal(line, "12s / 1m 15s | 2026.7.27 17:11");
-	assert.ok(rawLine.includes("\x1b[1;38;2;109;40;217m12s\x1b[0m"));
+	assert.equal(line, "第 4 轮 · 12s / 1m 15s | 2026.7.27 17:11");
+	assert.ok(rawLine.includes("\x1b[1;38;2;109;40;217m第 4 轮 · 12s\x1b[0m"));
 	assert.ok(rawLine.includes(activeTheme.getFgAnsi("dim")));
 });
 

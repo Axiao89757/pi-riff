@@ -224,6 +224,7 @@ type AssistantMessagePrototype = {
 };
 
 type AgentTimingEntry = {
+	round?: number;
 	durationMs: number;
 	completedAt?: number;
 	totalDurationMs?: number;
@@ -238,18 +239,24 @@ type AgentTimingSessionEntry = {
 
 function cumulativeAgentDurations(entries: Iterable<AgentTimingSessionEntry>): {
 	byTimestamp: Map<number | string, number>;
+	roundByTimestamp: Map<number | string, number>;
+	completedRounds: number;
 	totalDurationMs: number;
 } {
 	const byTimestamp = new Map<number | string, number>();
+	const roundByTimestamp = new Map<number | string, number>();
+	let completedRounds = 0;
 	let totalDurationMs = 0;
 	for (const entry of entries) {
 		if (entry.type !== "custom" || entry.customType !== AGENT_TIMING_ENTRY) continue;
 		const timing = entry.data as AgentTimingEntry | undefined;
 		if (typeof timing?.durationMs !== "number" || !Number.isFinite(timing.durationMs)) continue;
 		totalDurationMs += Math.max(0, timing.durationMs);
+		completedRounds += 1;
 		byTimestamp.set(entry.timestamp, totalDurationMs);
+		roundByTimestamp.set(entry.timestamp, completedRounds);
 	}
-	return { byTimestamp, totalDurationMs };
+	return { byTimestamp, roundByTimestamp, completedRounds, totalDurationMs };
 }
 
 type LegacyCtxTitleEntry = {
@@ -2575,24 +2582,31 @@ export default function (pi: ExtensionAPI) {
 
 	let pendingAgentStartedAt: number | undefined;
 	let agentStartedAt: number | undefined;
+	let completedAgentRounds = 0;
 	let cumulativeAgentDurationMs = 0;
 	const cumulativeAgentDurationByTimestamp = new Map<number | string, number>();
+	const agentRoundByTimestamp = new Map<number | string, number>();
 	let workingTimer: ReturnType<typeof setInterval> | undefined;
 	let workingTimerContext: ExtensionContext | undefined;
 
 	const restoreCumulativeAgentDuration = (ctx: ExtensionContext) => {
 		const restored = cumulativeAgentDurations(ctx.sessionManager.getBranch());
+		completedAgentRounds = restored.completedRounds;
 		cumulativeAgentDurationMs = restored.totalDurationMs;
 		cumulativeAgentDurationByTimestamp.clear();
+		agentRoundByTimestamp.clear();
 		for (const [timestamp, durationMs] of restored.byTimestamp) {
 			cumulativeAgentDurationByTimestamp.set(timestamp, durationMs);
+		}
+		for (const [timestamp, round] of restored.roundByTimestamp) {
+			agentRoundByTimestamp.set(timestamp, round);
 		}
 	};
 
 	const refreshWorkingTimer = () => {
 		if (agentStartedAt === undefined || workingTimerContext?.mode !== "tui") return;
 		const currentDurationMs = Math.max(0, performance.now() - agentStartedAt);
-		const message = `${formatWholeSeconds(currentDurationMs)}`
+		const message = `第 ${completedAgentRounds + 1} 轮 · ${formatWholeSeconds(currentDurationMs)}`
 			+ ` / ${formatWholeSeconds(cumulativeAgentDurationMs + currentDurationMs)}`;
 		workingTimerContext.ui.setWorkingMessage(
 			`${ACTIVE_TIMING_HIGHLIGHT}${message}${ANSI_STYLE_RESET}`,
@@ -2649,7 +2663,13 @@ export default function (pi: ExtensionAPI) {
 		const total = totalDurationMs === undefined ? "" : ` / ${formatWholeSeconds(totalDurationMs)}`;
 		const completedAt = formatLocalTimestamp(entry.data?.completedAt ?? entry.timestamp);
 		const timestamp = completedAt ? ` | ${completedAt}` : "";
-		const turn = `${CTX_TITLE_HIGHLIGHT}${formatWholeSeconds(durationMs)}${ANSI_STYLE_RESET}`;
+		const persistedRound = typeof entry.data?.round === "number" && Number.isInteger(entry.data.round)
+			&& entry.data.round > 0
+			? entry.data.round
+			: undefined;
+		const round = agentRoundByTimestamp.get(entry.timestamp) ?? persistedRound;
+		const turnLabel = `${round === undefined ? "" : `第 ${round} 轮 · `}${formatWholeSeconds(durationMs)}`;
+		const turn = `${CTX_TITLE_HIGHLIGHT}${turnLabel}${ANSI_STYLE_RESET}`;
 		const metadata = total || timestamp ? theme.fg("dim", `${total}${timestamp}`) : "";
 		return new Text(turn + metadata, 0, 0);
 	});
@@ -2680,7 +2700,9 @@ export default function (pi: ExtensionAPI) {
 		if (durationMs === undefined || ctx.mode !== "tui") return;
 
 		cumulativeAgentDurationMs += durationMs;
+		completedAgentRounds += 1;
 		pi.appendEntry<AgentTimingEntry>(AGENT_TIMING_ENTRY, {
+			round: completedAgentRounds,
 			durationMs,
 			completedAt: Date.now(),
 			totalDurationMs: cumulativeAgentDurationMs,
