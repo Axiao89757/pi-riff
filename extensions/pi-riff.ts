@@ -2606,7 +2606,7 @@ export default function (pi: ExtensionAPI) {
 	const refreshWorkingTimer = () => {
 		if (agentStartedAt === undefined || workingTimerContext?.mode !== "tui") return;
 		const currentDurationMs = Math.max(0, performance.now() - agentStartedAt);
-		const message = `T${completedAgentRounds + 1}  ${formatWholeSeconds(currentDurationMs)}`
+		const message = `T${completedAgentRounds + 1} | ${formatWholeSeconds(currentDurationMs)}`
 			+ ` / ${formatWholeSeconds(cumulativeAgentDurationMs + currentDurationMs)}`;
 		workingTimerContext.ui.setWorkingMessage(
 			`${ACTIVE_TIMING_HIGHLIGHT}${message}${ANSI_STYLE_RESET}`,
@@ -2668,7 +2668,7 @@ export default function (pi: ExtensionAPI) {
 			? entry.data.round
 			: undefined;
 		const round = agentRoundByTimestamp.get(entry.timestamp) ?? persistedRound;
-		const turnLabel = `${round === undefined ? "" : `T${round}  `}${formatWholeSeconds(durationMs)}`;
+		const turnLabel = `${round === undefined ? "" : `T${round} | `}${formatWholeSeconds(durationMs)}`;
 		const turn = `${CTX_TITLE_HIGHLIGHT}${turnLabel}${ANSI_STYLE_RESET}`;
 		const metadata = total || timestamp ? theme.fg("dim", `${total}${timestamp}`) : "";
 		return new Text(turn + metadata, 0, 0);

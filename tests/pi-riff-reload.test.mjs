@@ -186,9 +186,10 @@ test("legacy context titles migrate once into Pi's native session name", () => {
 			const oldTimingEntry = manager.getEntries().filter(
 				(entry) => entry.type === "custom" && entry.customType === "compact-agent-timing",
 			).at(-1);
-			const inferredTiming = extension.entryRenderers.get("compact-agent-timing")(
+			const renderedTiming = extension.entryRenderers.get("compact-agent-timing")(
 				oldTimingEntry, {}, { fg: (_color, text) => text },
-			).render(100)[0].replace(/\\x1b\\[[0-9;]*m/g, "").trimEnd().split(" | ")[0];
+			).render(100)[0].replace(/\\x1b\\[[0-9;]*m/g, "").trimEnd();
+			const inferredTiming = renderedTiming.slice(0, renderedTiming.lastIndexOf(" | "));
 			await extension.tools.get("set_ctx_title").definition.execute(
 				"set-name", { title: "Native title" }, undefined, undefined, {},
 			);
@@ -211,7 +212,7 @@ test("legacy context titles migrate once into Pi's native session name", () => {
 	}));
 	assert.deepEqual(result, {
 		migratedName: "Legacy title",
-		inferredTiming: "T2  2s / 3s",
+		inferredTiming: "T2 | 2s / 3s",
 		updatedName: "Native title",
 		legacyEntryCount: 1,
 	});
@@ -232,7 +233,7 @@ test("active Agent timing uses yellow while completed turns stay purple", async 
 
 	const activeMessage = messages.find((message) => typeof message === "string");
 	assert.ok(activeMessage);
-	assert.match(stripTerminalControls(activeMessage), /^T1  \d+(?:\.\d)?s \/ \d+(?:\.\d)?s$/);
+	assert.match(stripTerminalControls(activeMessage), /^T1 \| \d+(?:\.\d)?s \/ \d+(?:\.\d)?s$/);
 	assert.ok(activeMessage.includes("\x1b[1;38;2;251;191;36m"));
 	assert.doesNotMatch(activeMessage, /\x1b\[[0-9;]*48;2/);
 	const source = readFileSync(extensionPath, "utf8");
@@ -258,8 +259,8 @@ test("agent timing entries show compact turn and cumulative duration", () => {
 	assert.ok(component);
 	const rawLine = component.render(100)[0];
 	const line = stripTerminalControls(rawLine).trimEnd();
-	assert.equal(line, "T4  12s / 1m 15s | 2026.7.27 17:11");
-	assert.ok(rawLine.includes("\x1b[1;38;2;109;40;217mT4  12s\x1b[0m"));
+	assert.equal(line, "T4 | 12s / 1m 15s | 2026.7.27 17:11");
+	assert.ok(rawLine.includes("\x1b[1;38;2;109;40;217mT4 | 12s\x1b[0m"));
 	assert.ok(rawLine.includes(activeTheme.getFgAnsi("dim")));
 });
 
