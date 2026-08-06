@@ -222,7 +222,7 @@ test("active Agent timing uses yellow while completed turns stay purple", async 
 	const messages = [];
 	const ctx = {
 		mode: "tui",
-		ui: { setWorkingMessage: (message) => messages.push(message) },
+		ui: { theme: activeTheme, setWorkingMessage: (message) => messages.push(message) },
 	};
 	const agentStart = customPiExtension.handlers.get("agent_start")?.[0];
 	const sessionShutdown = customPiExtension.handlers.get("session_shutdown")?.[0];
@@ -234,7 +234,9 @@ test("active Agent timing uses yellow while completed turns stay purple", async 
 	const activeMessage = messages.find((message) => typeof message === "string");
 	assert.ok(activeMessage);
 	assert.match(stripTerminalControls(activeMessage), /^T1 \| \d+(?:\.\d)?s \/ \d+(?:\.\d)?s$/);
-	assert.ok(activeMessage.includes("\x1b[1;38;2;251;191;36m"));
+	assert.ok(activeMessage.includes("\x1b[1;38;2;251;191;36mT1\x1b[0m"));
+	assert.ok(activeMessage.includes(activeTheme.getFgAnsi("dim")));
+	assert.ok(activeMessage.includes("\x1b[1;38;2;251;191;36m0s / 0s\x1b[0m"));
 	assert.doesNotMatch(activeMessage, /\x1b\[[0-9;]*48;2/);
 	const source = readFileSync(extensionPath, "utf8");
 	assert.doesNotMatch(source, /ACTIVE_SPINNER_GLYPHS/);
@@ -260,7 +262,9 @@ test("agent timing entries show compact turn and cumulative duration", () => {
 	const rawLine = component.render(100)[0];
 	const line = stripTerminalControls(rawLine).trimEnd();
 	assert.equal(line, "T4 | 12s / 1m 15s | 2026.7.27 17:11");
-	assert.ok(rawLine.includes("\x1b[1;38;2;109;40;217mT4 | 12s\x1b[0m"));
+	assert.ok(rawLine.includes("\x1b[1;38;2;109;40;217mT4\x1b[0m"));
+	assert.ok(rawLine.includes("\x1b[1;38;2;109;40;217m12s / 1m 15s\x1b[0m"));
+	assert.doesNotMatch(rawLine, /\x1b\[1;38;2;109;40;217mT4 \|/);
 	assert.ok(rawLine.includes(activeTheme.getFgAnsi("dim")));
 });
 

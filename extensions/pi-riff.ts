@@ -2606,11 +2606,12 @@ export default function (pi: ExtensionAPI) {
 	const refreshWorkingTimer = () => {
 		if (agentStartedAt === undefined || workingTimerContext?.mode !== "tui") return;
 		const currentDurationMs = Math.max(0, performance.now() - agentStartedAt);
-		const message = `T${completedAgentRounds + 1} | ${formatWholeSeconds(currentDurationMs)}`
-			+ ` / ${formatWholeSeconds(cumulativeAgentDurationMs + currentDurationMs)}`;
-		workingTimerContext.ui.setWorkingMessage(
-			`${ACTIVE_TIMING_HIGHLIGHT}${message}${ANSI_STYLE_RESET}`,
-		);
+		const currentDuration = formatWholeSeconds(currentDurationMs);
+		const cumulativeDuration = formatWholeSeconds(cumulativeAgentDurationMs + currentDurationMs);
+		const round = `${ACTIVE_TIMING_HIGHLIGHT}T${completedAgentRounds + 1}${ANSI_STYLE_RESET}`;
+		const separator = workingTimerContext.ui.theme.fg("dim", " | ");
+		const timing = `${ACTIVE_TIMING_HIGHLIGHT}${currentDuration} / ${cumulativeDuration}${ANSI_STYLE_RESET}`;
+		workingTimerContext.ui.setWorkingMessage(round + separator + timing);
 	};
 
 	const startWorkingTimer = (ctx: typeof workingTimerContext) => {
@@ -2662,16 +2663,17 @@ export default function (pi: ExtensionAPI) {
 			: cumulativeAgentDurationByTimestamp.get(entry.timestamp);
 		const total = totalDurationMs === undefined ? "" : ` / ${formatWholeSeconds(totalDurationMs)}`;
 		const completedAt = formatLocalTimestamp(entry.data?.completedAt ?? entry.timestamp);
-		const timestamp = completedAt ? ` | ${completedAt}` : "";
 		const persistedRound = typeof entry.data?.round === "number" && Number.isInteger(entry.data.round)
 			&& entry.data.round > 0
 			? entry.data.round
 			: undefined;
 		const round = agentRoundByTimestamp.get(entry.timestamp) ?? persistedRound;
-		const turnLabel = `${round === undefined ? "" : `T${round} | `}${formatWholeSeconds(durationMs)}`;
-		const turn = `${CTX_TITLE_HIGHLIGHT}${turnLabel}${ANSI_STYLE_RESET}`;
-		const metadata = total || timestamp ? theme.fg("dim", `${total}${timestamp}`) : "";
-		return new Text(turn + metadata, 0, 0);
+		const roundLabel = round === undefined
+			? ""
+			: `${CTX_TITLE_HIGHLIGHT}T${round}${ANSI_STYLE_RESET}${theme.fg("dim", " | ")}`;
+		const timing = `${CTX_TITLE_HIGHLIGHT}${formatWholeSeconds(durationMs)}${total}${ANSI_STYLE_RESET}`;
+		const timestamp = completedAt ? theme.fg("dim", ` | ${completedAt}`) : "";
+		return new Text(roundLabel + timing + timestamp, 0, 0);
 	});
 
 	pi.on("input", (event) => {
