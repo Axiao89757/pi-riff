@@ -6,8 +6,9 @@ Scope: local Pi `1.1.0`, compared with Riff's previously documented `0.83.0` bas
 
 ### Default editor and tool rendering
 
-- Clear the custom editor factory to use Pi's actual default editor. Hide the working indicator through `ctx.ui.setWorkingVisible(false)`, not by filtering editor lines. This hides the working label as well as its animation; retry and compaction indicators are not intentionally suppressed.
-- Use a zero-height widget to obtain the redraw handle for Riff's assistant divider without replacing the editor.
+- Clear the custom editor factory to use Pi's actual default editor. Hide the working indicator through `ctx.ui.setWorkingVisible(false)`, not by filtering editor lines. This hides Pi's editor-border working label as well as its animation; retry and compaction indicators are not intentionally suppressed.
+- Render Riff's own spinner and live turn/cumulative timing in an independent widget above the default editor. It is zero-height while idle and one row while busy. Its redraw handle also drives Riff's assistant divider. Riff no longer writes timing to Pi's hidden working-message field.
+- Keep that loading row active through continuations until `agent_settled`. Stop its timer and clear the row on settlement, abort settlement, widget disposal or shutdown. Tests verify frame advancement, redraws before assistant text arrives, width bounds, timing updates, idle cleanup and continued use of the default editor.
 - Remove builtin tool re-registration. Compact delegates to official collapsed rendering; Full delegates to official expanded rendering. Both retain native result previews, error details, renderer-specific duration and padding. Tool arguments are passed through unchanged, including fields that older Riff versions treated as display metadata.
 - Refresh existing tool components when changing between collapsed presentation modes: Pi otherwise skips an unchanged expansion state.
 - Stop Riff's dense-tool animation timer when switching to Compact or Full.

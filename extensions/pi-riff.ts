@@ -39,7 +39,6 @@ const MAX_SESSION_NAME_LENGTH = 120;
 const MAX_FRIENDLY_SUMMARY_LENGTH = 96;
 const LEGACY_CTX_TITLE_ENTRY = "custom-pi-ctx-title";
 const AGENT_TIMING_ENTRY = "compact-agent-timing";
-const WORKING_TIMER_REFRESH_MS = 1000;
 const WORKING_SPINNER_INTERVAL_MS = 80;
 const ANSI_STYLE_RESET = "\x1b[0m";
 const ANSI_DIM = "\x1b[2m";
@@ -3258,31 +3257,41 @@ export default function (pi: ExtensionAPI) {
 		}
 	};
 
-	const refreshWorkingTimer = () => {
-		if (agentStartedAt === undefined || workingTimerContext?.mode !== "tui") return;
-		const currentDurationMs = Math.max(0, performance.now() - agentStartedAt);
+	const renderWorkingStatus = (width: number): string[] => {
+		if (agentStartedAt === undefined || workingTimerContext?.mode !== "tui" || width <= 0) return [];
+		const now = performance.now();
+		const currentDurationMs = Math.max(0, now - agentStartedAt);
 		const currentDuration = formatWholeSeconds(currentDurationMs);
 		const cumulativeDuration = formatWholeSeconds(cumulativeAgentDurationMs + currentDurationMs);
 		const theme = workingTimerContext.ui.theme;
+		const frame = SPINNER_GLYPHS[Math.floor(now / WORKING_SPINNER_INTERVAL_MS) % SPINNER_GLYPHS.length];
+		const spinner = riffHighlight(frame, "warning", true, theme);
 		const round = riffHighlight(`第 ${completedAgentRounds + 1} 轮`, "warning", true, theme);
-		const separator = workingTimerContext.ui.theme.fg("dim", " | ");
+		const separator = theme.fg("dim", " | ");
 		const timing = riffHighlight(`${currentDuration} / ${cumulativeDuration}`, "warning", true, theme);
-		workingTimerContext.ui.setWorkingMessage(round + separator + timing);
+		const padding = width >= 3 ? 1 : 0;
+		const margin = " ".repeat(padding);
+		return [margin + truncateToWidth(`${spinner} ${round}${separator}${timing}`, width - padding * 2, "...", true) + margin];
+	};
+
+	const refreshWorkingTimer = () => {
+		if (agentStartedAt === undefined || workingTimerContext?.mode !== "tui") return;
+		assistantPresentationState().requestRender?.();
 	};
 
 	const startWorkingTimer = (ctx: typeof workingTimerContext) => {
 		if (ctx?.mode !== "tui" || workingTimer !== undefined) return;
 		workingTimerContext = ctx;
 		refreshWorkingTimer();
-		workingTimer = setInterval(refreshWorkingTimer, WORKING_TIMER_REFRESH_MS);
+		workingTimer = setInterval(refreshWorkingTimer, WORKING_SPINNER_INTERVAL_MS);
 	};
 
 	const stopWorkingTimer = () => {
 		if (workingTimer !== undefined) clearInterval(workingTimer);
 		workingTimer = undefined;
-		workingTimerContext?.ui.setWorkingMessage();
 		workingTimerContext = undefined;
 		footerTimerState().suffix = undefined;
+		assistantPresentationState().requestRender?.();
 	};
 
 	pi.registerTool({
@@ -3389,22 +3398,24 @@ export default function (pi: ExtensionAPI) {
 			// Restore Pi's actual default editor, including future input fixes.
 			ctx.ui.setEditorComponent(undefined);
 			ctx.ui.setWorkingVisible(false);
-			// Obtain the public redraw handle without replacing the editor.
+			// Riff's loading/timing row is separate from Pi's hidden editor-border
+			// indicator. It also supplies the public redraw handle for dividers.
 			ctx.ui.setWidget("riff-render-hook", (tui) => {
 				const requestRender = () => tui.requestRender();
 				assistantPresentationState().requestRender = requestRender;
 				syncAssistantDividerAnimation();
 				return {
-					render: () => [],
+					render: renderWorkingStatus,
 					invalidate() {},
 					dispose() {
 						if (assistantPresentationState().requestRender === requestRender) {
+							stopWorkingTimer();
 							assistantPresentationState().requestRender = undefined;
 							stopAssistantDividerAnimation();
 						}
 					},
 				};
-			});
+			}, { placement: "aboveEditor" });
 		}
 		if (!pi.getSessionName()) {
 			const legacyTitle = restoreLegacyCtxTitle(ctx);

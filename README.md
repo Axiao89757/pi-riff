@@ -11,7 +11,7 @@ Personal [Pi](https://pi.dev) extension for a compact, work-focused terminal UI.
 - Friendly labels use local, history-tuned parsing for multiline and heredoc shell commands, wrappers, chained actions, and operation-specific tool arguments
 - Friendly recognizes common Git, test, quality, browser, database, file, and research workflows; Python, Node.js, Shell, Ruby, Perl, Expect, package scripts, Make targets, and direct executable calls retain factual names or paths without inferring business intent; focused standard test commands retain their targets
 - No additional model requests, prompt changes, tool schema changes, or display metadata
-- Numbered per-turn and cumulative Agent timing, with theme-aware warning/accent highlights and reload restoration
+- Independent Riff loading row above the default editor, with animated spinner, numbered per-turn and cumulative Agent timing, theme-aware highlights, and reload restoration
 - Full-width padded user message bands without boxed bubbles, with timestamps below the band
 - Clipboard image attachment with bounded reads and pre-read size checks, thumbnails, and expanded image display
 - Pi's default editor with its working indicator hidden, focused footer provider/model and routed-model identity, native cached usage/subscription statistics, and highlighted native session name
@@ -26,7 +26,7 @@ Automated regression tests pass with `@earendil-works/pi-coding-agent` `1.1.0` (
 
 This extension customizes Pi's exported interactive components and prototypes. Keep Pi versions aligned across machines and run the regression test after upgrading Pi. See [the compatibility audit](docs/compatibility.md) for fixes, test coverage, and remaining terminal-verification and migration limits.
 
-The editor is Pi's actual default editor, not a Riff subclass. Riff hides the working indicator through `setWorkingVisible(false)`; this hides its text as well as its animation, but does not disable retry or compaction status indicators. Completed-turn timing remains in the transcript.
+The editor is Pi's actual default editor, not a Riff subclass. Riff hides Pi's editor-border working indicator through `setWorkingVisible(false)` and shows its own spinner and live timing in a separate row above the editor. The row stays visible until `agent_settled`, disappears when idle, and stops animating on disposal or shutdown. Retry and compaction status indicators are not intentionally disabled. Completed-turn timing remains in the transcript.
 
 ## Install
 

@@ -451,31 +451,67 @@ test("legacy context titles migrate once into Pi's native session name", () => {
 	});
 });
 
-test("active Agent timing uses yellow while completed turns stay purple", async () => {
+test("Riff loading and timing animate above the native editor without using its hidden indicator", async () => {
+	let widget;
+	let redraws = 0;
 	const messages = [];
-	const ctx = {
-		mode: "tui",
-		ui: { theme: activeTheme, setWorkingMessage: (message) => messages.push(message) },
-	};
-	const agentStart = customPiExtension.handlers.get("agent_start")?.[0];
-	const sessionShutdown = customPiExtension.handlers.get("session_shutdown")?.[0];
-	assert.ok(agentStart);
-	assert.ok(sessionShutdown);
-	await agentStart({}, ctx);
-	await sessionShutdown({}, ctx);
-
-	const activeMessage = messages.find((message) => typeof message === "string");
-	assert.ok(activeMessage);
-	assert.match(stripTerminalControls(activeMessage), /^第 1 轮 \| \d+(?:\.\d)?s \/ \d+(?:\.\d)?s$/);
-	assert.ok(activeMessage.includes(activeTheme.fg("warning", activeTheme.bold("第 1 轮"))));
-	assert.ok(activeMessage.includes(activeTheme.getFgAnsi("dim")));
-	assert.ok(activeMessage.includes(activeTheme.fg("warning", activeTheme.bold("0s / 0s"))));
-	assert.doesNotMatch(activeMessage, /\x1b\[[0-9;]*48;2/);
-	const source = readFileSync(extensionPath, "utf8");
-	assert.doesNotMatch(source, /ACTIVE_SPINNER_GLYPHS/);
-	assert.doesNotMatch(source, /WORKING_SPINNER_FRAMES/);
-	assert.match(source, /setWorkingVisible\(false\)/);
-	assert.equal(messages.at(-1), undefined);
+	const factories = [];
+	const previousName = loaded.runtime.getSessionName;
+	const previousAppend = loaded.runtime.appendEntry;
+	const entries = [];
+	loaded.runtime.appendEntry = (type, data) => entries.push({ type, data });
+	const previousNow = Object.getOwnPropertyDescriptor(performance, "now");
+	let clock = 0;
+	Object.defineProperty(performance, "now", { value: () => clock, configurable: true });
+	loaded.runtime.getSessionName = () => "loading test";
+	const ui = new Proxy({ theme: activeTheme,
+		setWorkingMessage: (message) => messages.push(message),
+		setEditorComponent: (factory) => factories.push(factory),
+		setWidget: (_key, factory) => { widget = factory({ requestRender() { redraws++; } }); },
+	}, { get: (target, key) => target[key] ?? (() => undefined) });
+	const ctx = { mode: "tui", cwd: repositoryRoot, ui, sessionManager: { getBranch: () => [], getEntries: () => [] } };
+	try {
+		for (const handler of customPiExtension.handlers.get("session_start") ?? []) await handler({}, ctx);
+		assert.deepEqual(widget.render(80), []);
+		for (const handler of customPiExtension.handlers.get("agent_start") ?? []) await handler({}, ctx);
+		const first = widget.render(80)[0];
+		assert.ok(first, "busy status must remain visible while the native working indicator is hidden");
+		assert.match(stripTerminalControls(first), /^\s*[◐◓◑◒] 第 1 轮 \| 0s \/ 0s\s*$/);
+		assert.ok(first.includes(activeTheme.fg("warning", activeTheme.bold("第 1 轮"))));
+		clock = 160;
+		assert.notEqual(widget.render(80)[0], first, "spinner should advance");
+		clock = 2100;
+		assert.match(stripTerminalControls(widget.render(80)[0]), /2s \/ 2s/);
+		assert.ok(widget.render(8).every((line) => visibleWidth(line) <= 8));
+		await new Promise((resolve) => setTimeout(resolve, 180));
+		assert.ok(redraws > 1, "loading must redraw even without streaming assistant text");
+		assert.deepEqual(factories, [undefined]);
+		assert.deepEqual(messages, [], "Riff must not write to the native hidden working label");
+		for (const handler of customPiExtension.handlers.get("agent_end") ?? []) await handler({}, ctx);
+		assert.equal(widget.render(80).length, 1, "keep loading until settled, including continuations");
+		for (const handler of customPiExtension.handlers.get("agent_settled") ?? []) await handler({}, ctx);
+		assert.deepEqual(widget.render(80), []);
+		assert.equal(entries.length, 1);
+		for (const handler of customPiExtension.handlers.get("agent_start") ?? []) await handler({}, ctx);
+		assert.match(stripTerminalControls(widget.render(80)[0]), /第 2 轮/);
+		for (const handler of customPiExtension.handlers.get("agent_settled") ?? []) await handler({ aborted: true }, ctx);
+		assert.deepEqual(widget.render(80), []);
+		for (const handler of customPiExtension.handlers.get("agent_start") ?? []) await handler({}, ctx);
+		widget.dispose();
+		const afterDispose = redraws;
+		assert.deepEqual(widget.render(80), []);
+		await new Promise((resolve) => setTimeout(resolve, 120));
+		assert.equal(redraws, afterDispose, "disposing the widget must stop its animation timer");
+		for (const handler of customPiExtension.handlers.get("session_shutdown") ?? []) await handler({}, ctx);
+		assert.deepEqual(widget.render(80), []);
+	} finally {
+		for (const handler of customPiExtension.handlers.get("session_shutdown") ?? []) await handler({}, ctx);
+		widget?.dispose();
+		loaded.runtime.getSessionName = previousName;
+		loaded.runtime.appendEntry = previousAppend;
+		if (previousNow) Object.defineProperty(performance, "now", previousNow);
+		else delete performance.now;
+	}
 });
 
 test("agent timing entries show compact turn and cumulative duration", () => {
