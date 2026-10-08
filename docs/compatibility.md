@@ -8,9 +8,17 @@ Scope: local Pi `1.1.0`, compared with Riff's previously documented `0.83.0` bas
 
 - Clear the custom editor factory to use Pi's actual default editor. Hide the working indicator through `ctx.ui.setWorkingVisible(false)`, not by filtering editor lines. This hides the working label as well as its animation; retry and compaction indicators are not intentionally suppressed.
 - Use a zero-height widget to obtain the redraw handle for Riff's assistant divider without replacing the editor.
-- Remove builtin tool re-registration. Compact delegates to official collapsed rendering; Full delegates to official expanded rendering. Both retain native result previews, error details, renderer-specific duration and padding. Legacy display-metadata cleanup remains intentional.
+- Remove builtin tool re-registration. Compact delegates to official collapsed rendering; Full delegates to official expanded rendering. Both retain native result previews, error details, renderer-specific duration and padding. Tool arguments are passed through unchanged, including fields that older Riff versions treated as display metadata.
 - Refresh existing tool components when changing between collapsed presentation modes: Pi otherwise skips an unchanged expansion state.
 - Stop Riff's dense-tool animation timer when switching to Compact or Full.
+
+### Tool parameter safety, collapsed Thinking and clipboard bounds
+
+- Remove schema, required-field, tool-call, context and renderer argument cleanup based on `intent` or `_display_summary`. Riff cannot prove those fields belong to it, so it preserves them rather than guessing. Tests exercise real SDK schema initialization and custom renderers.
+- Collapsed Thinking generates its label directly from native state and padding without rendering the full child at width 4096. Completed collapsed blocks compute step counts once; live or expanded blocks skip that counting. Expanded blocks still use native rendering.
+- Delegate Thinking mouse events to the native child and respect its per-run visibility override. Tests verify click-to-expand/collapse without changing the global visibility setting.
+- Open clipboard paths nonblocking and without following symlinks where supported; inspect the opened descriptor's type and size before reading. Reject empty, nonregular and oversized files.
+- Allocate at most the checked size plus one sentinel byte and bound all reads to that allocation. If a file grows after the size check, reject it instead of reading unbounded data. Always close the descriptor. Tests cover oversized files with zero reads, growth during reading, valid PNGs, duplicate paths, invalid data, empty files, directories and symlinks.
 
 ### Footer accounting, caching and model identity
 
@@ -68,11 +76,11 @@ npm test
 git diff --check
 ```
 
-Result: **47 tests pass** on local Pi 1.1.0. Tests include real exported message/tool components, SDK initialization, retained legacy-patch simulation, ANSI background checks, native-output comparisons, footer scan counts, mouse events, theme changes, Kitty image allocation and repeated extension loading.
+Result: **52 tests pass** on local Pi 1.1.0. Tests include real exported message/tool components, SDK initialization, retained legacy-patch simulation, ANSI background checks, native-output comparisons, footer scan counts, mouse events, theme changes, Kitty image allocation and repeated extension loading.
 
 Compact/Full comparisons capture native ANSI output before loading Riff and cover seven builtin tools, unknown tools and a custom renderer across narrow/wide widths, padding 0/1/3, partial/final results and errors.
 
-The enabled local `~/.pi/agent/extensions/pi-riff.ts` was found to still contain the old BorderlessEditor. It has now been backed up and synchronized with the working copy. A real-editor regression test fails against the old copy and passes against the updated installed copy, checking that Pi's existing default editor is restored, both borders render, and pending input survives. Global Pi settings were not changed. Restart the running Pi process once to replace already-loaded old patches.
+The enabled local `~/.pi/agent/extensions/pi-riff.ts` was found to still contain the old BorderlessEditor. Its previous copy has been backed up and the enabled path now symlinks directly to the repository's `extensions/pi-riff.ts`, eliminating manual-copy drift. A real-editor regression test fails against the old copy and passes against the updated installed copy, checking that Pi's existing default editor is restored, both borders render, and pending input survives. All 52 tests also pass when loading through that enabled symlink. Global Pi settings were not changed; only the existing extension file was replaced by a link. Restart the running Pi process once to replace already-loaded old patches.
 
 Inspect the working copy in isolation:
 

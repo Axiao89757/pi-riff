@@ -4,6 +4,9 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "nod
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import { randomUUID } from "node:crypto";
 import test, { after } from "node:test";
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -516,7 +519,7 @@ test("Friendly is the default and compact-tools returns to it", async () => {
 	assert.equal(state.displayMode, "friendly");
 });
 
-test("reload removes legacy display metadata without adding tool parameters", () => {
+test("session initialization preserves other tools' business schemas including intent", () => {
 	const script = `
 		import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 		import { tmpdir } from "node:os";
@@ -536,8 +539,8 @@ test("reload removes legacy display metadata without adding tool parameters", ()
 			description: "Tool carrying the pre-intent display field",
 			parameters: {
 				type: "object",
-				properties: { _display_summary: { type: "string" }, query: { type: "string" } },
-				required: ["query"],
+				properties: { intent: { type: "string", description: "Business intent" }, _display_summary: { type: "string" }, query: { type: "string" } },
+				required: ["query", "intent", "_display_summary"],
 			},
 			execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
 		};
@@ -571,16 +574,16 @@ test("reload removes legacy display metadata without adding tool parameters", ()
 	}));
 	assert.deepEqual(result, {
 		extensionErrors: 0,
-		hasLegacyProperty: false,
-		hasLegacyRequired: false,
-		hasIntentProperty: false,
-		hasIntentRequired: false,
+		hasLegacyProperty: true,
+		hasLegacyRequired: true,
+		hasIntentProperty: true,
+		hasIntentRequired: true,
 	});
 });
 
 test("Friendly labels are local, deterministic, and all four modes are selectable", async () => {
 	const toolCallHandlers = customPiExtension.handlers.get("tool_call") ?? [];
-	assert.equal(toolCallHandlers.length, 1);
+	assert.equal(toolCallHandlers.length, 0);
 	const toolCall = {
 		type: "tool_call",
 		toolName: "probe",
@@ -588,17 +591,17 @@ test("Friendly labels are local, deterministic, and all four modes are selectabl
 		input: { query: "raw query", intent: "检查后台会话状态", _display_summary: "legacy summary" },
 	};
 	for (const handler of toolCallHandlers) await handler(toolCall, {});
-	assert.deepEqual(toolCall.input, { query: "raw query" });
+	assert.deepEqual(toolCall.input, { query: "raw query", intent: "检查后台会话状态", _display_summary: "legacy summary" });
 
 	const contextHandlers = customPiExtension.handlers.get("context") ?? [];
-	assert.equal(contextHandlers.length, 1);
+	assert.equal(contextHandlers.length, 0);
 	const originalArguments = { query: "raw query", intent: "检查后台会话状态", _display_summary: "legacy summary" };
 	const contextEvent = {
 		type: "context",
 		messages: [{ role: "assistant", content: [{ type: "toolCall", id: "probe-call", name: "probe", arguments: originalArguments }] }],
 	};
-	const contextResult = await contextHandlers[0](contextEvent, {});
-	assert.deepEqual(contextResult.messages[0].content[0].arguments, { query: "raw query" });
+	for (const handler of contextHandlers) await handler(contextEvent, {});
+	assert.deepEqual(contextEvent.messages[0].content[0].arguments, originalArguments);
 	assert.equal(originalArguments.intent, "检查后台会话状态");
 	assert.equal(originalArguments._display_summary, "legacy summary");
 
@@ -649,8 +652,7 @@ test("Friendly labels are local, deterministic, and all four modes are selectabl
 	await toolStyle.handler("full", ctx);
 	component.setExpanded(true);
 	const fullLines = component.render(100).map(stripTerminalControls);
-	assert.equal(fullLines.some((line) => line.includes("intent")), false);
-	assert.equal(fullLines.some((line) => line.includes("_display_summary")), false);
+	assert.deepEqual(component.args, { command: "git status --short" });
 	assert.equal(expandedStates.at(-1), true);
 	assert.deepEqual(notifications.map((entry) => entry.message), [
 		"Tool display mode: friendly",
@@ -658,6 +660,125 @@ test("Friendly labels are local, deterministic, and all four modes are selectabl
 		"Tool display mode: full",
 	]);
 	await toolStyle.handler("friendly", ctx);
+});
+
+test("collapsed Thinking never renders its full child and keeps native label and padding", () => {
+	for (const completed of [false, true]) {
+		const message = { role: "assistant", timestamp: Date.now(),
+			content: [{ type: "thinking", thinking: "long thought\n".repeat(5000) }],
+			...(completed ? { stopReason: "stop" } : {}) };
+		const component = new AssistantMessageComponent(message, true, undefined, "处理中…", 3);
+		const wrapper = component.contentContainer.children.find((child) => child.constructor.name === "CollapsibleThinkingComponent");
+		assert.ok(wrapper);
+		let renders = 0;
+		wrapper.content.render = () => { renders++; return ["SHOULD NOT RENDER"]; };
+		for (const width of [20, 80]) {
+			const line = component.render(width).map(stripTerminalControls).find((line) => line.trim());
+			assert.equal(renders, 0, "collapsed rows must not render the full child");
+			assert.ok(line.startsWith("   "));
+			assert.match(line, completed ? /Thinking/ : /处理中…/);
+		}
+		assert.equal(renders, 0);
+	}
+});
+
+test("clipboard rejects oversized files before reading and bounds reads if a file grows", async () => {
+	const path = join(tmpdir(), `pi-clipboard-${randomUUID()}.png`);
+	const handlers = customPiExtension.handlers.get("input") ?? [];
+	const event = { source: "interactive", text: path, images: [] };
+	const original = { readFileSync: fs.readFileSync, readSync: fs.readSync };
+	let reads = 0;
+	try {
+		fs.writeFileSync(path, "");
+		fs.truncateSync(path, 20 * 1024 * 1024 + 1);
+		fs.readFileSync = (...args) => { reads++; return original.readFileSync(...args); };
+		fs.readSync = (...args) => { reads++; return original.readSync(...args); };
+		syncBuiltinESMExports();
+		for (const handler of handlers) assert.equal(await handler(event, {}), undefined);
+		assert.equal(reads, 0, "oversized files must be rejected before reading");
+		const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+		fs.writeFileSync(path, png);
+		let bytesRequested = 0;
+		fs.readSync = (...args) => {
+			if (bytesRequested === 0) fs.appendFileSync(path, Buffer.alloc(1024 * 1024));
+			bytesRequested += args[3];
+			return original.readSync(...args);
+		};
+		syncBuiltinESMExports();
+		for (const handler of handlers) assert.equal(await handler(event, {}), undefined);
+		assert.ok(bytesRequested <= png.length + 1, "growth must not cause an unbounded read");
+		assert.ok(bytesRequested > 0);
+	} finally {
+		Object.assign(fs, original); syncBuiltinESMExports(); fs.rmSync(path, { force: true });
+	}
+});
+
+test("tool renderers receive business intent unchanged in both arguments and context", async () => {
+	const command = customPiExtension.commands.get("tool-style");
+	const args = { intent: "approve", _display_summary: "business value" };
+	let calls = 0;
+	let results = 0;
+	const definition = {
+		renderCall(input, _theme, context) {
+			assert.deepEqual(input, args); assert.deepEqual(context.args, args); calls++;
+			return { render: () => [input.intent], invalidate() {} };
+		},
+		renderResult(_result, _options, _theme, context) {
+			assert.deepEqual(context.args, args); results++;
+			return { render: () => [context.args._display_summary], invalidate() {} };
+		},
+	};
+	try {
+		for (const mode of ["compact", "full"]) {
+			await command.handler(mode, { ui: { notify() {}, setToolsExpanded() {} } });
+			const tool = new ToolExecutionComponent("business", mode, args, {}, definition, { requestRender() {} }, repositoryRoot);
+			tool.setExpanded(mode === "full");
+			tool.updateResult({ content: [], isError: false });
+			assert.deepEqual(tool.args, args);
+			assert.match(tool.render(80).map(stripTerminalControls).join("\n"), /approve/);
+		}
+		assert.ok(calls > 0 && results > 0);
+	} finally { await command.handler("friendly", { ui: { notify() {}, setToolsExpanded() {} } }); }
+});
+
+test("per-block Thinking clicks expand and collapse without changing the global visibility toggle", () => {
+	const component = new AssistantMessageComponent({ role: "assistant", timestamp: Date.now(), stopReason: "stop",
+		content: [{ type: "thinking", thinking: "first thought\nsecond thought" }] }, true);
+	const event = { type: "click", button: "left", x: 2, y: 0, screenX: 2, screenY: 0, width: 80, height: 1,
+		shift: false, alt: false, ctrl: false };
+	const findWrapper = () => component.contentContainer.children.find((child) => child.constructor.name === "CollapsibleThinkingComponent");
+	assert.equal(findWrapper().handleMouse(event)?.handled, true);
+	assert.equal(component.hideThinkingBlock, true);
+	assert.match(component.render(80).map(stripTerminalControls).join("\n"), /first thought/);
+	assert.equal(findWrapper().handleMouse(event)?.handled, true);
+	assert.doesNotMatch(component.render(80).map(stripTerminalControls).join("\n"), /first thought/);
+});
+
+test("clipboard attaches valid PNGs once and rejects empty, invalid and nonregular paths", async () => {
+	const path = join(tmpdir(), `pi-clipboard-${randomUUID()}.png`);
+	const link = join(tmpdir(), `pi-clipboard-${randomUUID()}.png`);
+	const handlers = customPiExtension.handlers.get("input") ?? [];
+	const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+	const run = async (text) => {
+		let result;
+		for (const handler of handlers) result = await handler({ source: "interactive", text, images: [] }, {});
+		return result;
+	};
+	try {
+		fs.writeFileSync(path, png);
+		const attached = await run(`${path} ${path}`);
+		assert.equal(attached.action, "transform");
+		assert.equal(attached.images.length, 1);
+		assert.equal(attached.images[0].data, png.toString("base64"));
+		assert.equal(attached.images[0].mimeType, "image/png");
+		if (fs.constants.O_NOFOLLOW) {
+			fs.symlinkSync(path, link);
+			assert.equal(await run(link), undefined);
+		}
+		fs.writeFileSync(path, ""); assert.equal(await run(path), undefined);
+		fs.writeFileSync(path, "not an image"); assert.equal(await run(path), undefined);
+		fs.rmSync(path); fs.mkdirSync(path); assert.equal(await run(path), undefined);
+	} finally { fs.rmSync(path, { recursive: true, force: true }); fs.rmSync(link, { force: true }); }
 });
 
 test("Thinking follows native visibility independently from tool display mode", async () => {

@@ -28,7 +28,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { readFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 
@@ -37,7 +37,6 @@ const MAX_CALL_LENGTH = 120;
 const MAX_ERROR_LENGTH = 180;
 const MAX_SESSION_NAME_LENGTH = 120;
 const MAX_FRIENDLY_SUMMARY_LENGTH = 96;
-const LEGACY_DISPLAY_SUMMARY_FIELD = "_display_summary";
 const LEGACY_CTX_TITLE_ENTRY = "custom-pi-ctx-title";
 const AGENT_TIMING_ENTRY = "compact-agent-timing";
 const WORKING_TIMER_REFRESH_MS = 1000;
@@ -90,7 +89,6 @@ type GenericToolExecutionInstance = {
 type GenericFallbackPrototype = {
 	compactAllToolDurationPatched?: boolean;
 	compactAllToolOutputPatched?: boolean;
-	customPiToolIntentHiddenPatched?: boolean;
 	createCallFallback(this: GenericToolExecutionInstance): Component;
 	createResultFallback(this: GenericToolExecutionInstance): Component | undefined;
 	formatToolExecution(this: GenericToolExecutionInstance): string;
@@ -174,6 +172,9 @@ type AssistantMessageInstance = {
 		children: Component[];
 	};
 	hideThinkingBlock: boolean;
+	hiddenThinkingLabel?: string;
+	outputPad?: number;
+	thinkingVisibilityOverrides?: Map<number, boolean>;
 };
 
 type AssistantBodyPresentationInstance = Component & {
@@ -400,38 +401,6 @@ function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-type ObjectParameterSchema = {
-	properties?: Record<string, unknown>;
-	required?: string[];
-	type?: unknown;
-};
-
-function removeLegacyToolDisplayMetadata(tool: Pick<ToolDefinition, "parameters">): boolean {
-	const schema = tool.parameters as unknown as ObjectParameterSchema;
-	if (schema.type !== "object" || !schema.properties) return false;
-
-	let changed = false;
-	for (const key of ["intent", LEGACY_DISPLAY_SUMMARY_FIELD]) {
-		if (key in schema.properties) {
-			delete schema.properties[key];
-			changed = true;
-		}
-	}
-	if (schema.required) {
-		const required = schema.required.filter((key) =>
-			key !== "intent" && key !== LEGACY_DISPLAY_SUMMARY_FIELD);
-		if (required.length !== schema.required.length) {
-			schema.required = required;
-			changed = true;
-		}
-	}
-	return changed;
-}
-
-function removeLegacyToolDisplayMetadataFromAllTools(pi: ExtensionAPI): void {
-	for (const tool of pi.getAllTools()) removeLegacyToolDisplayMetadata(tool);
-}
-
 function clipboardImageMimeType(bytes: Buffer): string | undefined {
 	if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
 		return "image/png";
@@ -448,6 +417,29 @@ function clipboardImageMimeType(bytes: Buffer): string | undefined {
 	return undefined;
 }
 
+function readBoundedClipboardImage(path: string): Buffer | undefined {
+	// Nonblocking/no-follow where supported prevents a clipboard-shaped path
+	// from blocking on a FIFO or following an unrelated symlink.
+	const fd = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0));
+	try {
+		const stat = fstatSync(fd);
+		if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_CLIPBOARD_IMAGE_BYTES) return undefined;
+		// One sentinel byte detects growth after fstat. Allocation and every
+		// read remain bounded even if the file changes while being read.
+		const bytes = Buffer.alloc(stat.size + 1);
+		let length = 0;
+		while (length < bytes.length) {
+			const count = readSync(fd, bytes, length, bytes.length - length, null);
+			if (count === 0) break;
+			length += count;
+		}
+		if (length === 0 || length === bytes.length) return undefined;
+		return bytes.subarray(0, length);
+	} finally {
+		closeSync(fd);
+	}
+}
+
 function attachClipboardImages(event: InputEvent): InputEventResult | undefined {
 	if (event.source !== "interactive") return undefined;
 
@@ -458,8 +450,8 @@ function attachClipboardImages(event: InputEvent): InputEventResult | undefined 
 	const clipboardImages: NonNullable<InputEvent["images"]> = [];
 	for (const imagePath of new Set(paths)) {
 		try {
-			const bytes = readFileSync(imagePath);
-			if (bytes.length === 0 || bytes.length > MAX_CLIPBOARD_IMAGE_BYTES) continue;
+			const bytes = readBoundedClipboardImage(imagePath);
+			if (!bytes) continue;
 			const mimeType = clipboardImageMimeType(bytes);
 			if (!mimeType) continue;
 
@@ -509,60 +501,6 @@ function genericErrorText(instance: GenericToolExecutionInstance): string | unde
 function genericErrorComponent(instance: GenericToolExecutionInstance): Component | undefined {
 	const error = genericErrorText(instance);
 	return error ? new Text(error, 0, 0) : undefined;
-}
-
-function argsWithoutLegacyToolMetadata(args: Record<string, unknown>): Record<string, unknown> {
-	if (!args) return args;
-	const hasIntent = Object.prototype.hasOwnProperty.call(args, "intent");
-	const hasLegacySummary = Object.prototype.hasOwnProperty.call(args, LEGACY_DISPLAY_SUMMARY_FIELD);
-	if (!hasIntent && !hasLegacySummary) return args;
-	const cleanArgs = { ...args };
-	delete cleanArgs.intent;
-	delete cleanArgs[LEGACY_DISPLAY_SUMMARY_FIELD];
-	return cleanArgs;
-}
-
-function installLegacyToolMetadataHiding(): void {
-	const prototype = ToolExecutionComponent.prototype as unknown as GenericFallbackPrototype;
-	if (prototype.customPiToolIntentHiddenPatched) return;
-
-	const getCallRenderer = prototype.getCallRenderer;
-	prototype.getCallRenderer = function () {
-		const renderer = getCallRenderer.call(this);
-		if (!renderer) return undefined;
-		return ((args, theme, context) => {
-			const cleanArgs = argsWithoutLegacyToolMetadata(args);
-			return renderer(cleanArgs, theme, { ...context, args: cleanArgs });
-		}) as CallRenderer;
-	};
-
-	const getResultRenderer = prototype.getResultRenderer;
-	prototype.getResultRenderer = function () {
-		const renderer = getResultRenderer.call(this);
-		if (!renderer) return undefined;
-		return ((result, options, theme, context) => {
-			const cleanArgs = argsWithoutLegacyToolMetadata(context.args);
-			return renderer(result, options, theme, { ...context, args: cleanArgs });
-		}) as ResultRenderer;
-	};
-
-	const formatToolExecution = prototype.formatToolExecution;
-	prototype.formatToolExecution = function () {
-		const originalArgs = this.args;
-		this.args = argsWithoutLegacyToolMetadata(originalArgs);
-		try {
-			return formatToolExecution.call(this);
-		} finally {
-			this.args = originalArgs;
-		}
-	};
-
-	Object.defineProperty(prototype, "customPiToolIntentHiddenPatched", {
-		value: true,
-		configurable: false,
-		enumerable: false,
-		writable: false,
-	});
 }
 
 function installGenericFallbackCompaction(): void {
@@ -784,33 +722,36 @@ class AssistantBodyStartComponent implements Component {
 }
 
 class CollapsibleThinkingComponent implements Component {
+	private readonly steps: number;
 	constructor(
 		private readonly content: Component,
-		private readonly thinking: string,
+		thinking: string,
 		private readonly completed: boolean,
 		private readonly expanded: boolean,
 		private readonly durationMs?: number,
-	) {}
+		private readonly hiddenLabel = "Thinking...",
+		private readonly paddingX = 1,
+	) {
+		// A live hidden label and an expanded block do not need a step count.
+		this.steps = completed && !expanded ? thinking.split("\n").filter((line) => line.trim()).length : 0;
+	}
 
 	render(width: number): string[] {
 		if (this.expanded) return this.content.render(width);
-
-		const fullLines = this.content.render(Math.max(width, 4096));
-		const visibleLines = fullLines.filter((line) => visibleWidth(line.replace(ANSI_SGR, "").trim()) > 0);
+		if (width <= 0) return [];
 		const theme = footerTimerState().getTheme?.();
-		const leadingPadding = visibleLines[0]?.replace(ANSI_SGR, "").match(/^\s*/)?.[0] ?? "";
-		if (!this.completed) {
-			const hiddenLabel = visibleLines[0];
-			if (!hiddenLabel) return [];
-			const ellipsis = theme?.italic(theme.fg("thinkingText", "...")) ?? "...";
-			return [truncateToWidth(hiddenLabel, width, ellipsis, true)];
-		}
-
-		const steps = this.thinking.split("\n").filter((line) => line.trim()).length;
+		const padding = Math.min(Math.max(0, this.paddingX), Math.floor((width - 1) / 2));
 		const duration = this.durationMs === undefined ? "" : ` · ${formatDuration(this.durationMs)}`;
-		const label = `Thinking · ${steps} ${steps === 1 ? "step" : "steps"}${duration}`;
+		const label = this.completed
+			? `Thinking · ${this.steps} ${this.steps === 1 ? "step" : "steps"}${duration}`
+			: this.hiddenLabel;
 		const styled = theme?.italic(theme.fg("thinkingText", label)) ?? label;
-		return [truncateToWidth(leadingPadding + styled, width, "...", true)];
+		const margin = " ".repeat(padding);
+		return [margin + truncateToWidth(styled, width - padding * 2, "...", true) + margin];
+	}
+
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		return this.content.handleMouse?.(event);
 	}
 
 	invalidate(): void {
@@ -832,6 +773,7 @@ function applyAssistantContentSpacing(
 		&& Boolean(timingMessage.stopReason);
 	const timing = thinkingTiming(timingMessage, completed);
 	let childIndex = 0;
+	let thinkingRunIndex = 0;
 	for (let runIndex = 0; runIndex < runs.length; runIndex++) {
 		const run = runs[runIndex];
 		const spacerStart = childIndex;
@@ -846,8 +788,10 @@ function applyAssistantContentSpacing(
 				children[childIndex],
 				run.thinking ?? "",
 				completed,
-				!instance.hideThinkingBlock,
+				!(instance.thinkingVisibilityOverrides?.get(thinkingRunIndex) ?? instance.hideThinkingBlock),
 				timing.durationMs,
+				instance.hiddenThinkingLabel,
+				instance.outputPad,
 			);
 		} else if (run.kind === "body") {
 			const body = children[childIndex] as AssistantBodyPresentationInstance;
@@ -862,6 +806,7 @@ function applyAssistantContentSpacing(
 				children[childIndex] = new AssistantBodyStartComponent(content, completed);
 			}
 		}
+		if (run.kind === "thinking") thinkingRunIndex += 1;
 		childIndex += 1;
 		if (run.kind === "body" && runs[runIndex + 1]?.kind === "thinking"
 			&& !(children[childIndex] instanceof Spacer)) {
@@ -3253,7 +3198,6 @@ function installGenericDuration(): void {
 export default function (pi: ExtensionAPI) {
 	installGenericFallbackCompaction();
 	installGenericDuration();
-	installLegacyToolMetadataHiding();
 	installMinimalToolRendering();
 	installToolDisplayModeCycling();
 	installToolDisplayModeRefresh();
@@ -3393,8 +3337,7 @@ export default function (pi: ExtensionAPI) {
 		return attachClipboardImages(event);
 	});
 
-	pi.on("before_agent_start", (event, ctx) => {
-		removeLegacyToolDisplayMetadataFromAllTools(pi);
+	pi.on("before_agent_start", (_event, ctx) => {
 		agentStartedAt ??= pendingAgentStartedAt ?? performance.now();
 		pendingAgentStartedAt = undefined;
 		startWorkingTimer(ctx);
@@ -3485,31 +3428,7 @@ export default function (pi: ExtensionAPI) {
 			ctx.ui.setHiddenThinkingLabel();
 		}
 
-		removeLegacyToolDisplayMetadataFromAllTools(pi);
 		ctx.ui.setToolsExpanded(toolState.displayMode === "full");
-	});
-
-	pi.on("context", (event) => {
-		let changed = false;
-		const messages = event.messages.map((message) => {
-			if (message.role !== "assistant") return message;
-			const content = message.content.map((block) => {
-				if (block.type !== "toolCall") return block;
-				const cleanArguments = argsWithoutLegacyToolMetadata(block.arguments);
-				if (cleanArguments === block.arguments) return block;
-				changed = true;
-				return { ...block, arguments: cleanArguments };
-			});
-			return content.some((block, index) => block !== message.content[index])
-				? { ...message, content }
-				: message;
-		});
-		return changed ? { messages } : undefined;
-	});
-
-	pi.on("tool_call", (event) => {
-		delete event.input.intent;
-		delete event.input[LEGACY_DISPLAY_SUMMARY_FIELD];
 	});
 
 	pi.on("tool_execution_start", (_event, ctx) => {
