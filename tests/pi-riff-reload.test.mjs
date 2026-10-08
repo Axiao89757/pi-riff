@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import test, { after } from "node:test";
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const extensionPath = join(repositoryRoot, "extensions", "pi-riff.ts");
+const extensionPath = process.env.PI_RIFF_TEST_EXTENSION ?? join(repositoryRoot, "extensions", "pi-riff.ts");
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 const testAgentDir = mkdtempSync(join(tmpdir(), "pi-riff-test-agent-"));
 process.env.PI_CODING_AGENT_DIR = testAgentDir;
@@ -18,7 +18,10 @@ after(() => {
 });
 const loaderRelativePath = join("dist", "core", "extensions", "loader.js");
 const piExecutable = realpathSync(execFileSync("which", ["pi"], { encoding: "utf8" }).trim());
-let piRoot = dirname(dirname(piExecutable));
+let piRoot = dirname(piExecutable);
+while (dirname(piRoot) !== piRoot && !existsSync(join(piRoot, loaderRelativePath))) {
+	piRoot = dirname(piRoot);
+}
 if (!existsSync(join(piRoot, loaderRelativePath))) {
 	const npmEnvironment = { ...process.env };
 	delete npmEnvironment.npm_config_prefix;
@@ -35,9 +38,12 @@ const indexUrl = pathToFileURL(join(piRoot, "dist", "index.js"));
 const themeUrl = pathToFileURL(join(piRoot, "dist", "modes", "interactive", "theme", "theme.js"));
 const tuiUrl = pathToFileURL(join(piRoot, "node_modules", "@earendil-works", "pi-tui", "dist", "index.js"));
 const { loadExtensions } = await import(loaderUrl.href);
-const { AssistantMessageComponent, FooterComponent, InteractiveMode, SkillInvocationMessageComponent, ToolExecutionComponent, UserMessageComponent, parseSkillBlock } = await import(indexUrl.href);
-const { Container } = await import(tuiUrl.href);
-const { initTheme, theme: activeTheme } = await import(themeUrl.href);
+const { AssistantMessageComponent, CustomEditor, FooterComponent, InteractiveMode, SkillInvocationMessageComponent, ToolExecutionComponent, UserMessageComponent, parseSkillBlock,
+	createReadToolDefinition, createBashToolDefinition, createEditToolDefinition, createWriteToolDefinition,
+	createGrepToolDefinition, createFindToolDefinition, createLsToolDefinition } = await import(indexUrl.href);
+const { Container, visibleWidth, Image, getCapabilities, setCapabilities, getCellDimensions, setCellDimensions } = await import(tuiUrl.href);
+const themeExports = await import(themeUrl.href);
+const { initTheme, theme: activeTheme } = themeExports;
 initTheme("dark");
 const footerTimerState = globalThis[Symbol.for("pi.custom-pi.footer-timer")] ??= {};
 footerTimerState.getTheme = () => activeTheme;
@@ -127,6 +133,49 @@ Object.defineProperty(containerPrototype, "customPiToolGroupBindingPatched", {
 	writable: false,
 });
 
+// Capture output before Riff touches ToolExecutionComponent prototypes.
+const nativeToolCases = [
+	["read", createReadToolDefinition(repositoryRoot), { path: "example.ts" }],
+	["bash", createBashToolDefinition(repositoryRoot), { command: "printf hello" }],
+	["edit", createEditToolDefinition(repositoryRoot), { path: "example.ts", oldText: "old", newText: "new", edits: [{ oldText: "old", newText: "new" }] }],
+	["write", createWriteToolDefinition(repositoryRoot), { path: "example.ts", content: "hello" }],
+	["grep", createGrepToolDefinition(repositoryRoot), { pattern: "hello", path: "." }],
+	["find", createFindToolDefinition(repositoryRoot), { pattern: "*.ts", path: "." }],
+	["ls", createLsToolDefinition(repositoryRoot), { path: "." }],
+	["unknown", undefined, { query: "hello" }],
+	["custom", {
+		renderCall: (_args, _theme, ctx) => ({ render: () => [`custom pad=${ctx.outputPad}`], invalidate() {} }),
+		renderResult: (_result, options, _theme, ctx) => ({ render: () => [`custom ${options.expanded ? "expanded" : "preview"} duration=${ctx.durationMs}`], invalidate() {} }),
+	}, { query: "hello" }],
+];
+function toolRenderMatrix(expanded) {
+	const records = [];
+	for (const [name, definition, args] of nativeToolCases) {
+		for (const outputPad of [0, 1, 3]) {
+			const component = new ToolExecutionComponent(name, "native-compare", args,
+				{ outputPad, showImages: false }, definition, { requestRender() {} }, repositoryRoot);
+			component.setExpanded(expanded);
+			component.markExecutionStarted();
+			component.setArgsComplete();
+			for (const [isError, isPartial] of [[false, true], [false, false], [true, false]]) {
+				component.updateResult({ content: [{ type: "text", text: Array.from({ length: 18 }, (_, i) => `line ${i}: 中文 hello`).join("\n") }],
+					details: { diff: "-old\n+new", firstChangedLine: 1 }, isError, durationMs: 1250 }, isPartial);
+				for (const width of [20, 80]) {
+					records.push({ name, outputPad, isError, isPartial, width, lines: component.render(width) });
+				}
+			}
+		}
+	}
+	return records;
+}
+const nativeCompactRendering = toolRenderMatrix(false);
+const nativeFullRendering = toolRenderMatrix(true);
+const nativeSwitchTool = new ToolExecutionComponent("unknown", "mode-switch", { query: "hello" }, {}, undefined,
+	{ requestRender() {} }, repositoryRoot);
+const switchResult = { content: [{ type: "text", text: "first line\nsecond line" }], details: undefined, isError: false };
+nativeSwitchTool.updateResult(switchResult);
+const nativeSwitchLines = nativeSwitchTool.render(80);
+
 const loaded = await loadExtensions([extensionPath], repositoryRoot);
 assert.deepEqual(loaded.errors, []);
 const customPiExtension = loaded.extensions.find((extension) => extension.resolvedPath === extensionPath);
@@ -154,6 +203,187 @@ test("Pi session name is the only title source", () => {
 	assert.doesNotMatch(source, /registerCommand\("ctx-title"/);
 	assert.doesNotMatch(source, /appendEntry<CtxTitleEntry>/);
 	assert.doesNotMatch(source, /setStatus\(CTX_TITLE_STATUS_KEY/);
+});
+
+test("session start restores the native editor and hides only the working indicator", async () => {
+	const editorFactories = [];
+	const workingVisibility = [];
+	let hook;
+	const ui = new Proxy({
+		theme: activeTheme,
+		setEditorComponent: (factory) => editorFactories.push(factory),
+		setWorkingVisible: (visible) => workingVisibility.push(visible),
+		setWidget: (_key, factory) => { hook = factory({ requestRender() {} }); },
+	}, { get: (target, key) => target[key] ?? (() => undefined) });
+	const { getSessionName, getAllTools } = loaded.runtime;
+	loaded.runtime.getSessionName = () => "test session";
+	loaded.runtime.getAllTools = () => [];
+	try {
+		for (const handler of customPiExtension.handlers.get("session_start") ?? []) {
+			await handler({}, { mode: "tui", cwd: repositoryRoot, ui,
+				sessionManager: { getBranch: () => [], getEntries: () => [] } });
+		}
+	} finally {
+		Object.assign(loaded.runtime, { getSessionName, getAllTools });
+	}
+	assert.deepEqual(editorFactories, [undefined]);
+	assert.deepEqual(workingVisibility, [false]);
+	assert.deepEqual(hook.render(80), []);
+	const changedTheme = { ...activeTheme, testThemeChange: true };
+	ui.theme = changedTheme;
+	assert.equal(globalThis[Symbol.for("pi.custom-pi.user-message-time")].getTheme(), changedTheme);
+	assert.equal(footerTimerState.getTheme(), changedTheme);
+	ui.theme = activeTheme;
+	hook.dispose();
+	const source = readFileSync(extensionPath, "utf8");
+	assert.doesNotMatch(source, /class BorderlessEditor|extends CustomEditor/);
+});
+
+test("session start restores the actual official editor with both borders and preserves input", async () => {
+	const tui = { terminal: { rows: 24, columns: 80 }, requestRender() {}, setFocus() {} };
+	const keybindings = { matches: () => false, getKeys: () => [] };
+	const defaultEditor = new CustomEditor(tui, themeExports.getEditorTheme(), keybindings, { embedWorkingStatus: true });
+	const text = "保留当前输入\n第二行";
+	const instance = { defaultEditor, editor: { getText: () => text }, editorContainer: new Container(),
+		disposeActiveSelector() {}, ui: tui, activeStatusIndicator: undefined };
+	const ui = new Proxy({ theme: activeTheme,
+		setEditorComponent: (factory) => interactivePrototype.setCustomEditorComponent.call(instance, factory),
+		setWidget: (_key, factory) => factory(tui),
+	}, { get: (target, key) => target[key] ?? (() => undefined) });
+	const previous = { getSessionName: loaded.runtime.getSessionName, getAllTools: loaded.runtime.getAllTools };
+	loaded.runtime.getSessionName = () => "editor test";
+	loaded.runtime.getAllTools = () => [];
+	try {
+		for (const handler of customPiExtension.handlers.get("session_start") ?? []) {
+			await handler({}, { mode: "tui", cwd: repositoryRoot, ui,
+				sessionManager: { getBranch: () => [], getEntries: () => [] } });
+		}
+		assert.equal(instance.editor, defaultEditor, "must use Pi's existing default editor, not a subclass");
+		assert.equal(instance.editor.getText(), text);
+		for (const width of [20, 80]) {
+			const lines = instance.editor.render(width).map(stripTerminalControls);
+			assert.match(lines[0], /^─+$/);
+			assert.match(lines.at(-1), /^─+$/);
+			assert.equal(visibleWidth(lines[0]), width);
+		}
+	} finally {
+		Object.assign(loaded.runtime, previous);
+		for (const handler of customPiExtension.handlers.get("session_shutdown") ?? []) await handler({}, {});
+	}
+});
+
+test("footer shows provider with the model identity", () => {
+	const footer = new FooterComponent({
+		state: {
+			model: {
+				contextWindow: 272_000,
+				id: "gpt-5.6-sol",
+				provider: "openai-codex",
+				reasoning: true,
+			},
+			thinkingLevel: "xhigh",
+		},
+		sessionManager: {
+			getCwd: () => repositoryRoot,
+			getEntryCount: () => 0,
+			getSessionId: () => "footer-test",
+			getLeafId: () => null,
+			getEntries: () => [],
+			getSessionName: () => undefined,
+		},
+		modelRuntime: {
+			isUsingOAuth: () => false,
+			isUsingSubscription: () => false,
+		},
+		getContextUsage: () => ({ contextWindow: 272_000, percent: 57.6, tokens: 157_000 }),
+	}, {
+		getAvailableProviderCount: () => 1,
+		getExtensionStatuses: () => new Map(),
+		getGitBranch: () => "main",
+	});
+
+	const stats = stripTerminalControls(footer.render(100)[1]).trimEnd();
+	assert.equal(stats, "157k/272k(57.6%) • openai-codex/gpt-5.6-sol(xhigh)");
+});
+
+function footerFixture(entries = []) {
+	let scans = 0;
+	let leaf = "leaf";
+	const model = { id: "test-model", provider: "test-provider", reasoning: true, contextWindow: 10000 };
+	const session = { model, state: { model, thinkingLevel: "high" },
+		sessionManager: { getCwd: () => repositoryRoot, getEntryCount: () => entries.length, getSessionId: () => "test",
+			getLeafId: () => leaf, getEntries: () => { scans++; return entries; }, getSessionName: () => undefined },
+		modelRuntime: { isUsingOAuth: () => true, isUsingSubscription: () => false },
+		getContextUsage: () => ({ contextWindow: session.routedModel?.model.contextWindow ?? 10000, percent: 10, tokens: 1000 }),
+	};
+	const footer = new FooterComponent(session, { getAvailableProviderCount: () => 1,
+		getExtensionStatuses: () => new Map(), getGitBranch: () => undefined });
+	return { footer, session, entries, scans: () => scans, moveLeaf: () => { leaf += "next"; } };
+}
+const sampleUsage = () => ({ input: 100, output: 20, cacheRead: 30, cacheWrite: 10,
+	totalTokens: 160, cost: { input: 0.1, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.1 } });
+
+test("footer shares native accounting for assistant, tool, standalone and summary usage", () => {
+	const entries = [
+		{ type: "message", message: { role: "assistant", usage: sampleUsage() } },
+		{ type: "message", message: { role: "toolResult", usage: sampleUsage() } },
+		... ["usage", "compaction", "branch_summary"].map((type) => ({ type, usage: sampleUsage() })),
+	];
+	const { footer, session } = footerFixture(entries);
+	session.modelRuntime.isUsingSubscription = () => true;
+	const line = stripTerminalControls(footer.render(180)[1]);
+	assert.match(line, /↑500 ↓100 R150 W50 CH21\.4% \$0\.500 \(sub\)/);
+});
+
+test("footer reuses the native cache and invalidates on append, leaf, model and session changes", () => {
+	const f = footerFixture([{ type: "usage", usage: sampleUsage() }]);
+	for (let i = 0; i < 10; i++) f.footer.render(120);
+	assert.equal(f.scans(), 1, "unchanged frames must not rescan entries");
+	f.entries.push({ type: "usage", usage: sampleUsage() });
+	assert.match(stripTerminalControls(f.footer.render(120)[1]), /↑200/);
+	assert.equal(f.scans(), 2);
+	f.moveLeaf(); f.footer.render(120); assert.equal(f.scans(), 3);
+	f.session.routedModel = { model: { ...f.session.model, id: "routed" } };
+	f.footer.render(120); assert.equal(f.scans(), 4);
+	const other = footerFixture([{ type: "usage", usage: sampleUsage() }]);
+	f.footer.setSession(other.session);
+	assert.match(stripTerminalControls(f.footer.render(120)[1]), /↑100/);
+	assert.equal(other.scans(), 1);
+});
+
+test("footer subscription detection is not OAuth detection and shows actual routed model", () => {
+	const { footer, session } = footerFixture();
+	assert.doesNotMatch(stripTerminalControls(footer.render(180)[1]), /\(sub\)/);
+	session.modelRuntime.isUsingSubscription = () => true;
+	assert.match(stripTerminalControls(footer.render(180)[1]), /\(sub\)/);
+	session.routedModel = { model: { provider: "actual", id: "routed", contextWindow: 20000, reasoning: true }, thinkingLevel: "xhigh" };
+	assert.match(stripTerminalControls(footer.render(180)[1]), /test-provider\/test-model\(high\) → actual\/routed\(xhigh\)/);
+	session.modelRuntime.isUsingSubscription = () => false;
+	session.routedModel = undefined;
+	session.state.model.provider = "kimi-coding";
+	assert.match(stripTerminalControls(footer.render(180)[1]), /\(sub\)/);
+});
+
+test("Command and Friendly honor outputPad and stay within narrow widths including errors", async () => {
+	const command = customPiExtension.commands.get("tool-style");
+	try {
+		for (const mode of ["command", "friendly"]) {
+			await command.handler(mode, { ui: { notify() {}, setToolsExpanded() {} } });
+			for (const outputPad of [0, 1, 3]) {
+				const tool = new ToolExecutionComponent("read", "padding", { path: "中文-file.ts" }, { outputPad }, undefined,
+					{ requestRender() {} }, repositoryRoot);
+				tool.updateResult({ content: [{ type: "text", text: "bad failure" }], isError: true, durationMs: 100 });
+				for (const width of [1, 2, 8, 40]) {
+					const lines = tool.render(width);
+					assert.ok(lines.every((line) => visibleWidth(line) <= width), `${mode} pad=${outputPad} width=${width}`);
+					if (width === 40) {
+						assert.ok(stripTerminalControls(lines[0]).startsWith(" ".repeat(outputPad)));
+						assert.ok(stripTerminalControls(lines[0]).endsWith(" ".repeat(outputPad)));
+					}
+				}
+			}
+		}
+	} finally { await command.handler("friendly", { ui: { notify() {}, setToolsExpanded() {} } }); }
 });
 
 test("legacy context titles migrate once into Pi's native session name", () => {
@@ -212,7 +442,7 @@ test("legacy context titles migrate once into Pi's native session name", () => {
 	}));
 	assert.deepEqual(result, {
 		migratedName: "Legacy title",
-		inferredTiming: "T2 | 2s / 3s",
+		inferredTiming: "第 2 轮 | 2s / 3s",
 		updatedName: "Native title",
 		legacyEntryCount: 1,
 	});
@@ -233,16 +463,15 @@ test("active Agent timing uses yellow while completed turns stay purple", async 
 
 	const activeMessage = messages.find((message) => typeof message === "string");
 	assert.ok(activeMessage);
-	assert.match(stripTerminalControls(activeMessage), /^T1 \| \d+(?:\.\d)?s \/ \d+(?:\.\d)?s$/);
-	assert.ok(activeMessage.includes("\x1b[1;38;2;251;191;36mT1\x1b[0m"));
+	assert.match(stripTerminalControls(activeMessage), /^第 1 轮 \| \d+(?:\.\d)?s \/ \d+(?:\.\d)?s$/);
+	assert.ok(activeMessage.includes(activeTheme.fg("warning", activeTheme.bold("第 1 轮"))));
 	assert.ok(activeMessage.includes(activeTheme.getFgAnsi("dim")));
-	assert.ok(activeMessage.includes("\x1b[1;38;2;251;191;36m0s / 0s\x1b[0m"));
+	assert.ok(activeMessage.includes(activeTheme.fg("warning", activeTheme.bold("0s / 0s"))));
 	assert.doesNotMatch(activeMessage, /\x1b\[[0-9;]*48;2/);
 	const source = readFileSync(extensionPath, "utf8");
 	assert.doesNotMatch(source, /ACTIVE_SPINNER_GLYPHS/);
-	assert.match(source, /WORKING_SPINNER_FRAMES = SPINNER_GLYPHS/);
-	assert.match(source, /ANSI_SUPERSCRIPT.*frame.*ANSI_BASELINE/);
-	assert.match(source, /intervalMs: WORKING_SPINNER_INTERVAL_MS/);
+	assert.doesNotMatch(source, /WORKING_SPINNER_FRAMES/);
+	assert.match(source, /setWorkingVisible\(false\)/);
 	assert.equal(messages.at(-1), undefined);
 });
 
@@ -261,10 +490,10 @@ test("agent timing entries show compact turn and cumulative duration", () => {
 	assert.ok(component);
 	const rawLine = component.render(100)[0];
 	const line = stripTerminalControls(rawLine).trimEnd();
-	assert.equal(line, "T4 | 12s / 1m 15s | 2026.7.27 17:11");
-	assert.ok(rawLine.includes("\x1b[1;38;2;109;40;217mT4\x1b[0m"));
-	assert.ok(rawLine.includes("\x1b[1;38;2;109;40;217m12s / 1m 15s\x1b[0m"));
-	assert.doesNotMatch(rawLine, /\x1b\[1;38;2;109;40;217mT4 \|/);
+	assert.equal(line, "第 4 轮 | 12s / 1m 15s | 2026.7.27 17:11");
+	assert.ok(rawLine.includes(activeTheme.fg("accent", activeTheme.bold("第 4 轮"))));
+	assert.ok(rawLine.includes(activeTheme.fg("accent", activeTheme.bold("12s / 1m 15s"))));
+	assert.equal(rawLine.includes(activeTheme.fg("accent", activeTheme.bold("第 4 轮 |"))), false);
 	assert.ok(rawLine.includes(activeTheme.getFgAnsi("dim")));
 });
 
@@ -277,14 +506,14 @@ test("Friendly labels have no model configuration or sidecar runtime", () => {
 	assert.doesNotMatch(source, /summaryModel/);
 });
 
-test("Command is the default and compact-tools returns to it", async () => {
+test("Friendly is the default and compact-tools returns to it", async () => {
 	const state = globalThis[Symbol.for("pi.custom-pi.minimal-tool-state")];
-	assert.equal(state.displayMode, "command");
+	assert.equal(state.displayMode, "friendly");
 	const command = customPiExtension.commands.get("compact-tools");
-	assert.match(command.description, /Command rendering/);
+	assert.match(command.description, /Friendly rendering/);
 	state.displayMode = "full";
 	await command.handler("", { ui: { setToolsExpanded() {}, notify() {} } });
-	assert.equal(state.displayMode, "command");
+	assert.equal(state.displayMode, "friendly");
 });
 
 test("reload removes legacy display metadata without adding tool parameters", () => {
@@ -483,7 +712,7 @@ test("Thinking follows native visibility independently from tool display mode", 
 	assert.ok(bodyIndex > 1);
 	assert.equal(mixedLines[bodyIndex - 2].trim(), "");
 	assert.equal(mixedLines[bodyIndex - 1], `${" ".repeat(9)}${"━".repeat(81)}${" ".repeat(10)}`);
-	assert.ok(mixedRawLines[bodyIndex - 1].includes("\x1b[38;2;109;40;217m"));
+	assert.ok(mixedRawLines[bodyIndex - 1].includes(activeTheme.getFgAnsi("accent")));
 	assert.equal(mixedLines[bodyIndex].trimEnd(), " Assistant body");
 	assert.equal(mixedRawLines[bodyIndex].includes(activeTheme.getBgAnsi("selectedBg")), false);
 	assert.equal(mixedLines[bodyIndex + 1].trim(), "");
@@ -495,8 +724,8 @@ test("Thinking follows native visibility independently from tool display mode", 
 	});
 	const newerRawLines = newerBody.render(100);
 	const newerMarker = newerRawLines.find((line) => /^ {9}━{40}[◐◓◑◒]━{40} {10}$/.test(stripTerminalControls(line)));
-	assert.ok(newerMarker?.includes("\x1b[38;2;109;40;217m"));
-	assert.ok(newerMarker?.includes("\x1b[1;38;2;196;132;252m"));
+	assert.ok(newerMarker?.includes(activeTheme.getFgAnsi("accent")));
+	assert.ok(["◐", "◓", "◑", "◒"].some((frame) => newerMarker?.includes(activeTheme.fg("accent", activeTheme.bold(frame)))));
 	await new Promise((resolve) => setTimeout(resolve, 100));
 	assert.notEqual(stripTerminalControls(newerBody.render(100)[1]), stripTerminalControls(newerMarker));
 	assert.match(stripTerminalControls(newerBody.render(8)[1]), /^━{3}[◐◓◑◒]━{3} $/);
@@ -662,8 +891,8 @@ test("live collapsed Thinking and its following tool render on adjacent lines", 
 	const bodyToolIndex = bodyLines.findIndex((line) => line.includes("read") && line.includes("body.ts"));
 	assert.equal(bodyLines[bodyIndex - 2].trim(), "");
 	assert.match(bodyLines[bodyIndex - 1], /^ {9}━{40}[◐◓◑◒]━{40} {10}$/);
-	assert.ok(bodyRawLines[bodyIndex - 1].includes("\x1b[38;2;109;40;217m"));
-	assert.ok(bodyRawLines[bodyIndex - 1].includes("\x1b[1;38;2;196;132;252m"));
+	assert.ok(bodyRawLines[bodyIndex - 1].includes(activeTheme.getFgAnsi("accent")));
+	assert.ok(["◐", "◓", "◑", "◒"].some((frame) => bodyRawLines[bodyIndex - 1].includes(activeTheme.fg("accent", activeTheme.bold(frame)))));
 	assert.equal(bodyLines[bodyIndex].trimEnd(), " Assistant explanation");
 	assert.equal(bodyRawLines[bodyIndex].includes(activeTheme.getBgAnsi("selectedBg")), false);
 	assert.equal(bodyToolIndex, bodyIndex + 2, JSON.stringify(bodyLines));
@@ -776,14 +1005,14 @@ test("Command uses relative paths, preserves both ends, and right-aligns facts",
 		{ requestRender() {} },
 		repositoryRoot,
 	);
-	read.updateResult({ content: [{ type: "text", text: "one\ntwo\nthree" }], details: undefined, isError: false });
+	read.updateResult({ content: [{ type: "text", text: "one\ntwo\nthree" }], details: undefined, isError: false, durationMs: 1250 });
 	const readLine = read.render(80).map(stripTerminalControls).find((line) => line.includes("read"));
 	assert.ok(readLine);
 	assert.match(readLine, /read docs\/agents\/issue-tracker\.md/);
 	const styledReadLine = read.render(80).find((line) => line.includes("issue-tracker.md"));
-	assert.match(styledReadLine, /\x1b\[1;38;2;86;196;112missue-tracker\.md\x1b\[0m/);
+	assert.ok(styledReadLine.includes(activeTheme.fg("success", activeTheme.bold("issue-tracker.md"))));
 	assert.doesNotMatch(readLine, new RegExp(repositoryRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-	assert.match(readLine, /3 lines\s+\d+(?:\.\d+)?(?:ms|s)$/);
+	assert.match(readLine, /3 lines\s+1\.3s\s*$/);
 	assert.equal(readLine.length, 80);
 	assert.ok(read.render(12).every((line) => stripTerminalControls(line).length <= 12));
 
@@ -796,15 +1025,15 @@ test("Command uses relative paths, preserves both ends, and right-aligns facts",
 		{ requestRender() {} },
 		repositoryRoot,
 	);
-	command.updateResult({ content: [], details: undefined, isError: false });
+	command.updateResult({ content: [], details: undefined, isError: false, durationMs: 250 });
 	const commandLine = command.render(72).map(stripTerminalControls).find((line) => line.includes("git"));
 	assert.ok(commandLine);
-	assert.match(commandLine, /^\$ git -C \. status/);
-	assert.match(commandLine, /\.\.\..*important-target\.md\s+\d+(?:\.\d+)?(?:ms|s)$/);
+	assert.match(commandLine, /^\s*\$ git -C \. status/);
+	assert.match(commandLine, /\.\.\..*important-target\.md\s+\d+(?:\.\d+)?(?:ms|s)\s*$/);
 	assert.ok(commandLine.length <= 72);
 	const styledCommandLine = command.render(100).find((line) => line.includes("status"));
-	assert.match(styledCommandLine, /\x1b\[1;38;2;86;196;112mgit\x1b\[0m/);
-	assert.match(styledCommandLine, /\x1b\[1;38;2;86;196;112mstatus\x1b\[0m/);
+	assert.ok(styledCommandLine.includes(activeTheme.fg("success", activeTheme.bold("git"))));
+	assert.ok(styledCommandLine.includes(activeTheme.fg("success", activeTheme.bold("status"))));
 
 	const rg = new ToolExecutionComponent(
 		"bash",
@@ -817,9 +1046,9 @@ test("Command uses relative paths, preserves both ends, and right-aligns facts",
 	);
 	rg.updateResult({ content: [], details: undefined, isError: false });
 	const styledRgLine = rg.render(100).find((line) => line.includes("GLB"));
-	assert.match(styledRgLine, /\x1b\[1;38;2;86;196;112mrg\x1b\[0m/);
-	assert.match(styledRgLine, /\x1b\[1;38;2;86;196;112m"GLB\|STEP\|cad_part"\x1b\[0m/);
-	assert.doesNotMatch(styledRgLine, /\x1b\[1;38;2;86;196;112msrc\x1b\[0m/);
+	assert.ok(styledRgLine.includes(activeTheme.fg("success", activeTheme.bold("rg"))));
+	assert.ok(styledRgLine.includes(activeTheme.fg("success", activeTheme.bold('"GLB|STEP|cad_part"'))));
+	assert.equal(styledRgLine.includes(activeTheme.fg("success", activeTheme.bold("src"))), false);
 
 	await toolStyle.handler("friendly", { ui: { notify() {}, setToolsExpanded() {} } });
 });
@@ -851,8 +1080,7 @@ test("Command highlights one semantic token for frequent shell tools", async () 
 		const component = new ToolExecutionComponent("bash", `semantic-${index}`, { command: item.command }, {}, undefined, { requestRender() {} }, repositoryRoot);
 		component.updateResult({ content: [], details: undefined, isError: false });
 		const line = component.render(120).find((candidate) => candidate.includes(item.semantic));
-		const escaped = item.semantic.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-		assert.match(line, new RegExp(`\\x1b\\[1;38;2;86;196;112m${escaped}\\x1b\\[0m`), item.command);
+		assert.ok(line.includes(activeTheme.fg("success", activeTheme.bold(item.semantic))), item.command);
 	}
 	await toolStyle.handler("friendly", { ui: { notify() {}, setToolsExpanded() {} } });
 });
@@ -864,10 +1092,10 @@ test("Command drops passive sleep prefixes before the actionable command", async
 	const component = new ToolExecutionComponent("bash", "sleep-prefix", { command: originalCommand }, {}, undefined, { requestRender() {} }, repositoryRoot);
 	component.updateResult({ content: [], details: undefined, isError: false });
 	const line = component.render(100).find((candidate) => candidate.includes("tmux"));
-	assert.match(stripTerminalControls(line), /^\$ tmux capture-pane/);
+	assert.match(stripTerminalControls(line), /^\s*\$ tmux capture-pane/);
 	assert.doesNotMatch(stripTerminalControls(line), /sleep 240/);
-	assert.match(line, /\x1b\[1;38;2;86;196;112mtmux\x1b\[0m/);
-	assert.match(line, /\x1b\[1;38;2;86;196;112mcapture-pane\x1b\[0m/);
+	assert.ok(line.includes(activeTheme.fg("success", activeTheme.bold("tmux"))));
+	assert.ok(line.includes(activeTheme.fg("success", activeTheme.bold("capture-pane"))));
 	assert.equal(component.args.command, originalCommand);
 	await toolStyle.handler("friendly", { ui: { notify() {}, setToolsExpanded() {} } });
 });
@@ -879,11 +1107,9 @@ test("Command highlights each actionable segment in chained shell commands", asy
 	const component = new ToolExecutionComponent("bash", "chained-command", { command: originalCommand }, {}, undefined, { requestRender() {} }, repositoryRoot);
 	component.updateResult({ content: [], details: undefined, isError: false });
 	const line = component.render(160).find((candidate) => candidate.includes("dossier"));
-	assert.match(line, /\x1b\[1;38;2;86;196;112mcd\x1b\[0m/);
-	assert.match(line, /\x1b\[1;38;2;86;196;112mnode\x1b\[0m/);
-	assert.match(line, /\x1b\[1;38;2;86;196;112m--test\x1b\[0m/);
-	assert.match(line, /\x1b\[1;38;2;86;196;112mnpm\x1b\[0m/);
-	assert.match(line, /\x1b\[1;38;2;86;196;112mbuild:type\x1b\[0m/);
+	for (const token of ["cd", "node", "--test", "npm", "build:type"]) {
+		assert.ok(line.includes(activeTheme.fg("success", activeTheme.bold(token))));
+	}
 	assert.equal(component.args.command, originalCommand);
 	await toolStyle.handler("friendly", { ui: { notify() {}, setToolsExpanded() {} } });
 });
@@ -933,17 +1159,161 @@ test("Command exposes deterministic edit, write, and search facts", async () => 
 	await toolStyle.handler("friendly", { ui: { notify() {}, setToolsExpanded() {} } });
 });
 
-test("Friendly labels describe file operations without model output", () => {
+test("Friendly labels use operation-specific native tool arguments without model output", async () => {
+	const toolStyle = customPiExtension.commands.get("tool-style");
+	await toolStyle.handler("friendly", { ui: { notify() {}, setToolsExpanded() {} } });
 	const cases = [
-		{ tool: "read", args: { path: "/tmp/project/package.json" }, expected: "读取 package.json" },
-		{ tool: "edit", args: { path: "/tmp/project/README.md", edits: [{ oldText: "a", newText: "b" }, { oldText: "c", newText: "d" }] }, expected: "编辑 README.md（2 处）" },
-		{ tool: "write", args: { path: "/tmp/project/config.json", content: "{}" }, expected: "写入 config.json" },
+		{ tool: "read", args: { path: "/tmp/project/src/app.ts", offset: 20, limit: 10 }, expected: "续读 src/app.ts（20–29 行）" },
+		{ tool: "read", args: { path: "/tmp/project/src/app.ts", offset: 1, limit: 2000 }, expected: "读取 src/app.ts", forbidden: "1–2000" },
+		{ tool: "read", args: { path: "/tmp/project/.agents/skills/research/SKILL.md", offset: 1, limit: 2000 }, expected: "读取技能说明 research/SKILL.md" },
+		{ tool: "read", args: { path: "/tmp/project/assets/logo.png" }, expected: "查看图片 assets/logo.png" },
+		{ tool: "read", args: { path: "/tmp/project/very/long/worktree/server/app/agent/sdk_runtime/native/command_transaction.py" }, expected: "读取 native/command_transaction.py", forbidden: "very/long/worktree" },
+		{ tool: "edit", args: { path: "/tmp/project/tests/app.test.ts", edits: [{ oldText: "a", newText: "b" }, { oldText: "c", newText: "d" }] }, expected: "更新测试 tests/app.test.ts（2 处）" },
+		{ tool: "edit", args: { path: "/tmp/project/docs/spec.md", edits: [{ oldText: "a", newText: "b" }] }, expected: "更新文档 docs/spec.md（1 处）" },
+		{ tool: "write", args: { path: "/tmp/project/docs/report.md", content: "# Report" }, expected: "生成文档 docs/report.md" },
+		{ tool: "grep", args: { pattern: "handleOrder", path: "/tmp/project/src" }, expected: "在 src 搜索 handleOrder" },
+		{ tool: "find", args: { pattern: "*.test.ts", path: "/tmp/project/src" }, expected: "在 src 查找 *.test.ts" },
+		{ tool: "web_search", args: { query: "", queries: ["Pi extension rendering", "Pi custom tools", "Pi TUI"] }, expected: "搜索网络（3 项）：Pi extension rendering" },
+		{ tool: "source_check", args: { claim: "Friendly labels are local" }, expected: "核验事实：Friendly labels are local" },
+		{ tool: "fetch_content", args: { url: "", urls: ["https://example.com/docs", "https://pi.dev/docs"], mode: "readable", prompt: "", timestamp: "" }, expected: "获取网页内容（2 项）：example.com/docs" },
+		{ tool: "fetch_content", args: { url: "https://example.com/docs", urls: [], mode: "answer", prompt: "Summarize" }, expected: "分析网页内容：example.com/docs" },
+		{ tool: "get_search_content", args: { responseId: "r1", findText: ["renderCall"], url: "" }, expected: "在来源中查找：renderCall" },
+		{ tool: "get_search_content", args: { responseId: "r1", url: "https://example.com/docs", query: "", offset: 0 }, expected: "读取来源：example.com/docs" },
+		{ tool: "set_ctx_title", args: { title: "Friendly 规则" }, expected: "设置会话名：Friendly 规则" },
+		{ tool: "set_ctx_title", args: {}, expected: "清除会话名" },
+		{ tool: "multi_tool_use.parallel", args: { tool_uses: [{ recipient_name: "functions.read" }, { recipient_name: "functions.read" }] }, expected: "并行读取 2 个文件" },
 	];
 	for (const [index, item] of cases.entries()) {
-		const component = new ToolExecutionComponent(item.tool, `local-${index}`, item.args, {}, undefined, { requestRender() {} }, "/tmp/project");
+		const component = new ToolExecutionComponent(item.tool, `friendly-native-${index}`, item.args, {}, undefined, { requestRender() {} }, "/tmp/project");
 		component.updateResult({ content: [], details: undefined, isError: false });
-		assert.equal(component.render(100).map(stripTerminalControls).some((line) => line.includes(item.expected)), true);
+		const rendered = component.render(160).map(stripTerminalControls).join("\n");
+		assert.match(rendered, new RegExp(item.expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), item.tool);
+		if (item.forbidden) assert.doesNotMatch(rendered, new RegExp(item.forbidden), item.tool);
 	}
+});
+
+test("Friendly shell labels parse exact commands and compose independent actions", async () => {
+	const toolStyle = customPiExtension.commands.get("tool-style");
+	await toolStyle.handler("friendly", { ui: { notify() {}, setToolsExpanded() {} } });
+	const cases = [
+		{ command: "python3 -m pytest", expected: "运行项目测试" },
+		{ command: "python3 -m unittest discover -s tests -p 'test_render_results.py' -v", expected: "运行测试：test_render_results.py", forbidden: "运行项目测试" },
+		{ command: "node --test tests/pi-riff-reload.test.mjs", expected: "运行测试：tests/pi-riff-reload.test.mjs", forbidden: "运行项目测试" },
+		{ command: "npm run test:integration", expected: "运行项目脚本：test:integration", forbidden: "运行测试" },
+		{ command: "python3 -m py_compile src/app.py", expected: "检查 Python 语法：src/app.py" },
+		{ command: "node --check src/index.js", expected: "检查 JavaScript 语法：src/index.js" },
+		{ command: "python3 scripts/rebuild_index.py --dry-run", expected: "运行 Python 脚本：scripts/rebuild_index.py", forbidden: "重建索引" },
+		{ command: "API_KEY=secret python3 .scratch/validation/run_integrated_baseline.py --limit 3", expected: "运行 Python 脚本：.scratch/validation/run_integrated_baseline.py", forbidden: "运行集成基线" },
+		{ command: "uv run python scripts/render_results.py", expected: "运行 Python 脚本：scripts/render_results.py", forbidden: "生成结果页面" },
+		{ command: "node scripts/render-results.mjs --out report.html", expected: "运行 Node.js 脚本：scripts/render-results.mjs", forbidden: "生成" },
+		{ command: "./scripts/backfill.py --limit 10", expected: "运行 Python 脚本：scripts/backfill.py", forbidden: "回填数据" },
+		{ command: "python3 jobs/custom_worker.py --once", expected: "运行 Python 脚本：jobs/custom_worker.py" },
+		{ command: "python3 tools/freeze_us_run_manifest.py freeze --run-id v1", expected: "运行 Python 脚本：tools/freeze_us_run_manifest.py", forbidden: "冻结运行清单" },
+		{ command: "python3 tools/freeze_us_run_manifest.py verify receipt.json", expected: "运行 Python 脚本：tools/freeze_us_run_manifest.py", forbidden: "验证运行冻结清单" },
+		{ command: "python3 tools/probe_p002.py --plan fixed.json", expected: "运行 Python 脚本：tools/probe_p002.py", forbidden: "探测 P002" },
+		{ command: "python3 tools/build_dataset_v1.py", expected: "运行 Python 脚本：tools/build_dataset_v1.py", forbidden: "构建 V1 数据集" },
+		{ command: "python3 tools/run_and_seal_us_evaluation.py prepare --run-id v1", expected: "运行 Python 脚本：tools/run_and_seal_us_evaluation.py", forbidden: "准备封存评估" },
+		{ command: "python3 tools/run_and_seal_us_evaluation.py verify --run-dir runs/v1", expected: "运行 Python 脚本：tools/run_and_seal_us_evaluation.py", forbidden: "验证封存评估" },
+		{ command: "python3 scripts/native_agent_db.py history", expected: "运行 Python 脚本：scripts/native_agent_db.py", forbidden: "数据库历史" },
+		{ command: "bash scripts/deploy.sh --dry-run", expected: "运行 Shell 脚本：scripts/deploy.sh" },
+		{ command: "bash -n scripts/deploy.sh", expected: "检查 Shell 语法：scripts/deploy.sh", forbidden: "运行 Shell 脚本" },
+		{ command: "./scripts/check-receipts.sh", expected: "运行 Shell 脚本：scripts/check-receipts.sh" },
+		{ command: "./scripts/tests/test-runtime.sh", expected: "运行 Shell 脚本：scripts/tests/test-runtime.sh", forbidden: "运行测试" },
+		{ command: "sudo zsh tools/release.zsh", expected: "运行 Shell 脚本：tools/release.zsh", forbidden: "运行 sudo" },
+		{ command: "bash -lc 'echo ready'", expected: "执行 Shell 命令", forbidden: "运行 Shell 脚本" },
+		{ command: "ruby -e 'puts 1'", expected: "执行内联 Ruby", forbidden: "运行 ruby" },
+		{ command: "ruby scripts/report.rb", expected: "运行 Ruby 脚本：scripts/report.rb" },
+		{ command: "perl -0777 -ne 'print' page.html", expected: "执行内联 Perl", forbidden: "运行 perl" },
+		{ command: "expect -c 'spawn pi'", expected: "执行内联 Expect", forbidden: "运行 expect" },
+		{ command: "uv --directory server run --frozen pytest -q", expected: "运行项目测试", forbidden: "执行 uv" },
+		{ command: "uv run ruff check src tests", expected: "检查代码规范" },
+		{ command: "uvx --from ruff ruff check src tests", expected: "检查代码规范", forbidden: "运行 uvx" },
+		{ command: "$PY -m ruff check src tests", expected: "检查代码规范", forbidden: "运行 Python 模块" },
+		{ command: "uv run mypy src", expected: "检查 Python 类型" },
+		{ command: "npm run lint", expected: "运行项目脚本：lint", forbidden: "检查代码规范" },
+		{ command: "make service-status", expected: "运行 Make 目标：service-status", forbidden: "检查服务状态" },
+		{ command: "npm --prefix web exec -- vue-tsc --noEmit", expected: "检查项目类型" },
+		{ command: "npx prettier --check src/app.ts", expected: "检查代码格式", forbidden: "运行 npx" },
+		{ command: "git add src/app.ts", expected: "暂存 src/app.ts" },
+		{ command: "git rebase main", expected: "变基到 main" },
+		{ command: "git merge-base --is-ancestor main HEAD", expected: "检查分支祖先关系" },
+		{ command: "git blame -L 10,20 -- src/app.ts", expected: "查看代码归属" },
+		{ command: "git status --short; git log -2 --oneline; git diff --stat", expected: "检查仓库状态与变更", forbidden: "另 1 项" },
+		{ command: "git commit -m 'refine labels' && git push", expected: "提交并推送代码更改" },
+		{ command: "git status --short && npm test", expected: "检查仓库状态；运行项目测试" },
+		{ command: "cd /tmp/project\nrg -n 'Friendly' src | head -20", expected: "在 src 搜索：Friendly", forbidden: "运行 cd" },
+		{ command: "rg -n 'REUSE_PLAN_MISMATCH|_source_plan' src/single_case_executor.py", expected: "在 src/single_case_executor.py 搜索：REUSE_PLAN_MISMATCH|_source_plan" },
+		{ command: "rg -n -e 'Node3' -e 'Node4' src/runner.py src/contracts.py", expected: "在 src/runner.py 等 2 处 搜索：Node3｜Node4" },
+		{ command: "rg 'alpha' src/a.ts; rg 'beta' src/b.ts", expected: "在 src/a.ts 搜索：alpha；在 src/b.ts 搜索：beta", forbidden: "另" },
+		{ command: "grep -R --include='*.py' 'validated_model_checkpoints' src tests", expected: "在 src 等 2 处 搜索：validated_model_checkpoints", forbidden: "--include" },
+		{ command: "rg --files src | head -100", expected: "列出项目文件", forbidden: "搜索代码内容" },
+		{ command: "find src -name '*.test.ts'", expected: "在 src 查找文件：*.test.ts" },
+		{ command: "python3 - <<'PY'\nimport json\nprint(json.load(open('data.json')))\nPY", expected: "执行内联 Python", forbidden: "分析数据" },
+		{ command: "python3 - <<'PY'\nimport ast\nast.parse(open('app.py').read())\nPY", expected: "执行内联 Python", forbidden: "分析 Python 代码" },
+		{ command: "python3 - <<'PY'\nimport os\nprint(os.getenv('DATABASE_URL'))\nPY", expected: "执行内联 Python", forbidden: "检查环境配置" },
+		{ command: "node --input-type=module <<'EOF'\nimport { createAgentSession } from 'pi';\nEOF", expected: "执行内联 Node.js", forbidden: "Pi SDK" },
+		{ command: "for f in *.jsonl; do jq -r '.type' \"$f\"; done", expected: "处理 JSON 数据", forbidden: "运行 for" },
+		{ command: "set -euo pipefail\ndocker compose ps", expected: "检查容器状态", forbidden: "运行 set" },
+		{ command: "cat app.log 2>&1 | tail -20", expected: "查看日志 app.log", forbidden: "读取 2>&1" },
+		{ command: "psql app -Atc 'select count(*) from users'", expected: "查询数据库" },
+		{ command: "python3 scripts/fto-dotenv-exec.py .env bash -lc 'psql app -Atc select'", expected: "运行 Python 脚本：scripts/fto-dotenv-exec.py", forbidden: "查询数据库" },
+		{ command: "python3 scripts/fto-dotenv-exec.py .env python3 - <<'PY'\nfrom pathlib import Path\nprint(Path('app.py'))\nPY", expected: "运行 Python 脚本：scripts/fto-dotenv-exec.py", forbidden: "执行内联 Python" },
+		{ command: "python3 - '$file' <<'PY'\nfrom pathlib import Path\nprint(Path('app.py'))\nPY", expected: "执行内联 Python", forbidden: "$file" },
+		{ command: "python3 -c \"open('config.py').read()\"", expected: "执行内联 Python", forbidden: "config.py" },
+		{ command: "node scripts/wrapper.mjs <<'JS'\nconsole.log('input')\nJS", expected: "运行 Node.js 脚本：scripts/wrapper.mjs", forbidden: "执行内联 Node.js" },
+		{ command: "python3 scripts/wrapper.py --flag -m unittest tests/test_nested.py", expected: "运行 Python 脚本：scripts/wrapper.py", forbidden: "运行测试" },
+		{ command: "python3 scripts/fto-dotenv-exec.py .env python3 -m unittest tests/test_nested.py", expected: "运行 Python 脚本：scripts/fto-dotenv-exec.py", forbidden: "运行测试" },
+		{ command: "playwright-cli -s=pi click '#submit'", expected: "点击网页元素" },
+		{ command: "playwright-cli -s=pi run-code 'async page => page.title()'", expected: "在浏览器执行脚本" },
+		{ command: "playwright-cli -s=pi eval 'document.body.innerText'", expected: "在浏览器执行脚本", forbidden: "读取网页内容" },
+		{ command: "playwright-cli -s=pi eval 'JSON.stringify(localStorage)'", expected: "在浏览器执行脚本", forbidden: "检查浏览器存储" },
+		{ command: "playwright-cli -s=pi eval 'getComputedStyle(document.body).display'", expected: "在浏览器执行脚本", forbidden: "检查网页布局" },
+		{ command: "./scripts/fto-workflow service-status", expected: "运行可执行脚本：scripts/fto-workflow", forbidden: "检查服务状态" },
+		{ command: "command -v playwright-cli", expected: "检查命令可用性：playwright-cli" },
+		{ command: "export MODE=test; python3 scripts/run.py", expected: "运行 Python 脚本：scripts/run.py", forbidden: "运行 export" },
+		{ command: "pi --version; pi list", expected: "查看 Pi 版本；列出 Pi 扩展", forbidden: "运行 Pi" },
+		{ command: "pi --no-extensions --session-dir /tmp/probe -p 'hello'", expected: "运行 Pi 自动化会话" },
+		{ command: "echo 'git status'", expected: "输出命令信息", forbidden: "检查仓库状态" },
+		{ command: "printf 'rm src/app.ts'", expected: "输出命令信息", forbidden: "删除" },
+	];
+	for (const [index, item] of cases.entries()) {
+		const component = new ToolExecutionComponent("bash", `friendly-shell-${index}`, { command: item.command }, {}, undefined, { requestRender() {} }, "/tmp/project");
+		component.updateResult({ content: [], details: undefined, isError: false });
+		const rendered = component.render(160).map(stripTerminalControls).join("\n");
+		assert.match(rendered, new RegExp(item.expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), item.command);
+		if (item.forbidden) assert.doesNotMatch(rendered, new RegExp(item.forbidden), item.command);
+	}
+});
+
+test("Friendly completed file calls show localized result facts", async () => {
+	const toolStyle = customPiExtension.commands.get("tool-style");
+	await toolStyle.handler("friendly", { ui: { notify() {}, setToolsExpanded() {} } });
+	const read = new ToolExecutionComponent("read", "friendly-fact-read", { path: "/tmp/project/src/app.ts" }, {}, undefined, { requestRender() {} }, "/tmp/project");
+	read.updateResult({ content: [{ type: "text", text: "a\nb\nc" }], details: undefined, isError: false });
+	const completedRead = read.render(100).join("\n");
+	assert.match(stripTerminalControls(completedRead), /3 行/);
+	assert.ok(completedRead.includes(activeTheme.fg("success", activeTheme.bold("读取"))));
+	assert.ok(completedRead.includes(`${activeTheme.getFgAnsi("toolOutput")} src/app.ts`));
+	assert.equal(completedRead.includes(activeTheme.fg("success", activeTheme.bold("读取 src/app.ts"))), false);
+
+	const runningRead = new ToolExecutionComponent("read", "friendly-running-read", { path: "/tmp/project/src/running.ts" }, {}, undefined, { requestRender() {} }, "/tmp/project");
+	const runningLine = runningRead.render(100).join("\n");
+	assert.ok(runningLine.includes(activeTheme.fg("success", activeTheme.bold("读取"))));
+	assert.ok(runningLine.includes(`${activeTheme.getFgAnsi("toolTitle")} src/running.ts`));
+	assert.equal(runningLine.includes(activeTheme.fg("success", activeTheme.bold("读取 src/running.ts"))), false);
+	runningRead.updateResult({ content: [], details: undefined, isError: false });
+	runningRead.render(100);
+
+	const search = new ToolExecutionComponent("grep", "friendly-search-style", { path: "/tmp/project/src", pattern: "读取|搜索" }, {}, undefined, { requestRender() {} }, "/tmp/project");
+	search.updateResult({ content: [], details: undefined, isError: false });
+	const searchLine = search.render(100).join("\n");
+	assert.ok(searchLine.includes(activeTheme.fg("success", activeTheme.bold("搜索"))));
+	assert.equal(searchLine.includes(activeTheme.fg("success", activeTheme.bold("在 src"))), false);
+	assert.equal(searchLine.includes(activeTheme.fg("success", activeTheme.bold("读取|搜索"))), false);
+
+	const write = new ToolExecutionComponent("write", "friendly-fact-write", { path: "/tmp/project/docs/report.md", content: "hello" }, {}, undefined, { requestRender() {} }, "/tmp/project");
+	write.updateResult({ content: [], details: undefined, isError: false });
+	assert.match(write.render(100).map(stripTerminalControls).join("\n"), /5 字节/);
 });
 
 test("main-agent tool messages are not given Friendly metadata", async () => {
@@ -1033,6 +1403,193 @@ test("skill messages stay collapsed and image binding does not leak skill text",
 	legacyBindings = 0;
 });
 
+test("Compact and Full match official tool rendering including previews, errors, padding and duration", async () => {
+	const command = customPiExtension.commands.get("tool-style");
+	const ui = { notify() {}, setToolsExpanded() {} };
+	try {
+		await command.handler("compact", { ui });
+		assert.deepEqual(toolRenderMatrix(false), nativeCompactRendering);
+		await command.handler("full", { ui });
+		assert.deepEqual(toolRenderMatrix(true), nativeFullRendering);
+		for (const name of ["read", "bash", "edit", "write", "grep", "find", "ls"]) {
+			assert.equal(customPiExtension.tools.has(name), false, `Riff must not replace builtin ${name}`);
+		}
+	} finally {
+		await command.handler("friendly", { ui });
+	}
+});
+
+test("switching Friendly or Command to Compact refreshes already-collapsed tools", async () => {
+	const command = customPiExtension.commands.get("tool-style");
+	const instance = { toolOutputExpanded: false, chatContainer: new Container(), loadedResourcesContainer: new Container(),
+		showStatus() {}, ui: { requestRender() {} } };
+	const ui = { notify() {}, setToolsExpanded: (expanded) => interactivePrototype.setToolsExpanded.call(instance, expanded) };
+	try {
+		for (const mode of ["friendly", "command"]) {
+			await command.handler(mode, { ui });
+			instance.chatContainer.clear();
+			const tool = new ToolExecutionComponent("unknown", "mode-switch", { query: "hello" }, {}, undefined,
+				{ requestRender() {} }, repositoryRoot);
+			tool.updateResult(switchResult);
+			instance.chatContainer.addChild(tool);
+			await command.handler("compact", { ui });
+			assert.deepEqual(tool.render(80), nativeSwitchLines);
+		}
+	} finally {
+		await command.handler("friendly", { ui: { notify() {}, setToolsExpanded() {} } });
+	}
+});
+
+test("dense tool mouse clicks use rendered bounds while drag, wheel and pending calls pass through", async () => {
+	const command = customPiExtension.commands.get("tool-style");
+	const event = { type: "click", button: "left", x: 3, y: 0, screenX: 3, screenY: 0, width: 60, height: 1,
+		shift: false, alt: false, ctrl: false };
+	try {
+		for (const mode of ["command", "friendly"]) {
+			await command.handler(mode, { ui: { notify() {}, setToolsExpanded() {} } });
+			let redraws = 0;
+			const tool = new ToolExecutionComponent("read", "click", { path: "hello.ts" }, {}, undefined,
+				{ requestRender() { redraws++; } }, repositoryRoot);
+			assert.equal(tool.handleMouse(event), undefined, "pending calls should not expand");
+			tool.updateResult(switchResult);
+			const lines = tool.render(60);
+			for (const type of ["press", "drag", "wheel", "release"]) {
+				assert.equal(tool.handleMouse({ ...event, type }), undefined);
+			}
+			assert.equal(tool.handleMouse({ ...event, y: lines.length }), undefined);
+			assert.equal(tool.handleMouse({ ...event, button: "right" }), undefined);
+			assert.equal(tool.handleMouse({ ...event, y: lines.length - 1, height: lines.length })?.handled, true);
+			assert.equal(tool.expanded, true);
+			assert.ok(redraws > 0);
+		}
+	} finally { await command.handler("friendly", { ui: { notify() {}, setToolsExpanded() {} } }); }
+});
+
+test("switching to official tool modes stops Riff's dense-tool animation timer", async () => {
+	const state = globalThis[Symbol.for("pi.custom-pi.minimal-tool-state")];
+	const command = customPiExtension.commands.get("tool-style");
+	try {
+		for (const mode of ["compact", "full"]) {
+			await command.handler("command", { ui: { notify() {}, setToolsExpanded() {} } });
+			const tool = new ToolExecutionComponent("read", "animation", { path: "pending.ts" }, {}, undefined,
+				{ requestRender() {} }, repositoryRoot);
+			tool.render(80);
+			assert.ok(state.animationTimer !== undefined);
+			await command.handler(mode, { ui: { notify() {}, setToolsExpanded() {} } });
+			assert.equal(state.animationTimer, undefined);
+			assert.equal(state.runningTools.size, 0);
+		}
+	} finally { await command.handler("friendly", { ui: { notify() {}, setToolsExpanded() {} } }); }
+});
+
+test("user image caches invalidate with the message on terminal or theme changes", () => {
+	const message = new UserMessageComponent("");
+	let thumbnailInvalidations = 0;
+	let expandedInvalidations = 0;
+	message.customPiImages = [{ thumbnail: { invalidate: () => thumbnailInvalidations++ },
+		expanded: { invalidate: () => expandedInvalidations++ }, dimensions: { widthPx: 1, heightPx: 1 } }];
+	message.invalidate();
+	assert.equal(thumbnailInvalidations, 1);
+	assert.equal(expandedInvalidations, 1);
+});
+
+test("dense highlights follow the current dark or light theme instead of fixed RGB colors", async () => {
+	const state = footerTimerState;
+	const previous = state.getTheme;
+	const command = customPiExtension.commands.get("tool-style");
+	try {
+		await command.handler("command", { ui: { notify() {}, setToolsExpanded() {} } });
+		state.getTheme = () => themeExports.theme;
+		const tool = new ToolExecutionComponent("read", "theme", { path: "hello.ts" }, {}, undefined,
+			{ requestRender() {} }, repositoryRoot);
+		tool.updateResult(switchResult);
+		let dark;
+		for (const name of ["dark", "light"]) {
+			initTheme(name);
+			const current = themeExports.theme;
+			const line = tool.render(80)[0];
+			assert.ok(line.includes(current.fg("success", current.bold("hello.ts"))));
+			const entry = customPiExtension.entryRenderers.get("compact-agent-timing")({ data: { round: 1, durationMs: 1000 } }, {}, current);
+			assert.ok(entry.render(80)[0].includes(current.fg("accent", current.bold("第 1 轮"))));
+			if (name === "dark") dark = line;
+			else assert.notEqual(line, dark);
+		}
+	} finally {
+		initTheme("dark"); state.getTheme = previous;
+		await command.handler("friendly", { ui: { notify() {}, setToolsExpanded() {} } });
+	}
+});
+
+test("image-only message preserves native Kitty row allocation and invalidates on cell-size changes", () => {
+	const caps = getCapabilities();
+	const cells = getCellDimensions();
+	const state = globalThis[Symbol.for("pi.custom-pi.user-message-time")];
+	const previousExpanded = state.imagesExpanded;
+	const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+	try {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		setCellDimensions({ widthPx: 9, heightPx: 18 });
+		state.imagesExpanded = false;
+		const dimensions = { widthPx: 512, heightPx: 512 };
+		const thumbnail = new Image(png, "image/png", { fallbackColor: (text) => text }, { maxHeightCells: 16 }, dimensions);
+		const expanded = new Image(png, "image/png", { fallbackColor: (text) => text }, { maxHeightCells: 40 }, dimensions);
+		const message = new UserMessageComponent("");
+		message.customPiImages = [{ thumbnail, expanded, dimensions }];
+		const initial = message.render(40);
+		assert.ok(initial.some((line) => line.includes("\x1b_G")));
+		assert.equal(initial.length, thumbnail.render(38).length + 3);
+		const id = thumbnail.getImageId();
+		setCellDimensions({ widthPx: 9, heightPx: 36 });
+		message.invalidate();
+		const resized = message.render(40);
+		assert.ok(resized.length < initial.length);
+		assert.equal(thumbnail.getImageId(), id);
+		message.setExpanded(true);
+		assert.equal(message.render(40).length, expanded.render(38).length + 3);
+		assert.ok(message.render(12).length > 0);
+	} finally { setCapabilities(caps); setCellDimensions(cells); state.imagesExpanded = previousExpanded; }
+});
+
+test("reloading current Riff does not stack prototype wrappers or replace builtin tools", async () => {
+	const before = { toolRender: ToolExecutionComponent.prototype.render, toolMouse: ToolExecutionComponent.prototype.handleMouse,
+		footerRender: FooterComponent.prototype.render, userInvalidate: UserMessageComponent.prototype.invalidate,
+		setToolsExpanded: InteractiveMode.prototype.setToolsExpanded };
+	const reloaded = await loadExtensions([extensionPath], repositoryRoot);
+	assert.deepEqual(reloaded.errors, []);
+	const extension = reloaded.extensions.find((candidate) => candidate.resolvedPath === extensionPath);
+	assert.ok(extension);
+	assert.deepEqual({ toolRender: ToolExecutionComponent.prototype.render, toolMouse: ToolExecutionComponent.prototype.handleMouse,
+		footerRender: FooterComponent.prototype.render, userInvalidate: UserMessageComponent.prototype.invalidate,
+		setToolsExpanded: InteractiveMode.prototype.setToolsExpanded }, before);
+	for (const name of ["read", "bash", "edit", "write", "grep", "find", "ls"]) assert.equal(extension.tools.has(name), false);
+	const command = extension.commands.get("tool-style");
+	try {
+		await command.handler("compact", { ui: { notify() {}, setToolsExpanded() {} } });
+		assert.deepEqual(toolRenderMatrix(false), nativeCompactRendering);
+		const f = footerFixture([{ type: "usage", usage: sampleUsage() }]);
+		for (let i = 0; i < 5; i++) f.footer.render(180);
+		assert.equal(f.scans(), 1);
+	} finally { await command.handler("friendly", { ui: { notify() {}, setToolsExpanded() {} } }); }
+});
+
+test("user message right padding keeps its background after a nested background reset", () => {
+	const state = globalThis[Symbol.for("pi.custom-pi.user-message-time")];
+	state.getTheme = () => activeTheme;
+	// The old Box -> Markdown layout ends its content with SGR 49.
+	const content = activeTheme.bg("userMessageBg", "还有 gpt-6-sol 系列");
+	const message = { children: [{ children: [{ render: () => [content] }] }] };
+	const line = state.renderRightBubble(message, 60)[1];
+	let background = false;
+	let lastSpaceBackground;
+	for (const token of line.matchAll(/\x1b\[([\d;]*)m|([^\x1b])/gu)) {
+		if (token[1] !== undefined) {
+			if (token[1].startsWith("48;")) background = true;
+			else if (token[1] === "49" || token[1] === "0" || token[1] === "") background = false;
+		} else if (token[2] === " ") lastSpaceBackground = background;
+	}
+	assert.equal(lastSpaceBackground, true, "rightmost padding cell must retain userMessageBg");
+});
+
 test("user message timestamps sit below the padded background band", () => {
 	globalThis[Symbol.for("pi.custom-pi.user-message-time")].getTheme = () => activeTheme;
 	const message = new UserMessageComponent("spacing test");
@@ -1068,6 +1625,21 @@ test("user message bands have one cell of padding on every side", () => {
 	const shortLine = stripTerminalControls(short.render(100)[1]);
 	assert.equal(shortLine.startsWith(" short message"), true);
 	assert.equal(shortLine.length, 100);
+});
+
+test("native user Markdown supports outputPad, resize, and wide text without overflow", () => {
+	const state = globalThis[Symbol.for("pi.custom-pi.user-message-time")];
+	state.getTheme = () => activeTheme;
+	const message = new UserMessageComponent("还有 gpt-6-sol 系列 **粗体** `code`\n\n第二行");
+	for (const padding of [0, 1, 3]) {
+		message.setOutputPad(padding);
+		for (const width of [8, 20, 60]) {
+			const lines = message.render(width);
+			assert.ok(lines.every((line) => visibleWidth(line) <= width));
+			assert.equal(visibleWidth(lines[0]), width);
+			assert.ok(stripTerminalControls(lines[1]).startsWith(" ".repeat(padding)));
+		}
+	}
 });
 
 test("setExpanded discards image records retained from the pre-thumbnail patch", () => {

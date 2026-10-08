@@ -4,24 +4,29 @@ Personal [Pi](https://pi.dev) extension for a compact, work-focused terminal UI.
 
 ## Features
 
-- Full, compact, enhanced Command, and deterministic Friendly tool-call rendering
+- Official expanded Full and collapsed Compact tool rendering, enhanced Command, and deterministic Friendly tool-call rendering
 - Command uses workspace-relative paths, middle truncation, right-aligned timing, and deterministic result facts
 - Thinking and tool calls form one compact activity block; a context-title-colored divider animates while the latest assistant text streams
 - Thinking follows Pi's native visibility toggle: generic live status or timed step count when collapsed, full reasoning when expanded
-- Friendly labels are generated locally from tool names and arguments
+- Friendly labels use local, history-tuned parsing for multiline and heredoc shell commands, wrappers, chained actions, and operation-specific tool arguments
+- Friendly recognizes common Git, test, quality, browser, database, file, and research workflows; Python, Node.js, Shell, Ruby, Perl, Expect, package scripts, Make targets, and direct executable calls retain factual names or paths without inferring business intent; focused standard test commands retain their targets
 - No additional model requests, prompt changes, tool schema changes, or display metadata
-- Numbered per-turn and cumulative Agent timing, with yellow active timing, purple completed-turn anchors, and reload restoration
+- Numbered per-turn and cumulative Agent timing, with theme-aware warning/accent highlights and reload restoration
 - Full-width padded user message bands without boxed bubbles, with timestamps below the band
 - Clipboard image attachment, thumbnails, and expanded image display
-- Compact editor rail, footer identity, model statistics, and highlighted native session name
+- Pi's default editor with its working indicator hidden, focused footer provider/model and routed-model identity, native cached usage/subscription statistics, and highlighted native session name
+- Command/Friendly respect native output padding and support click-to-expand without swallowing viewport drag or wheel events
+- User images invalidate their native rendering caches when the theme or terminal cell dimensions change
 - Pi's native session name is the single title source for the footer and session selector
 - Automatic collapse of tool output when a new tool starts
 
 ## Compatibility
 
-Tested with `@earendil-works/pi-coding-agent` `0.83.0`.
+Automated regression tests pass with `@earendil-works/pi-coding-agent` `1.1.0` (47 tests). Interactive terminal behavior is not exhaustively verified.
 
-This extension customizes Pi's exported interactive components and prototypes. Keep Pi versions aligned across machines and run the regression test after upgrading Pi.
+This extension customizes Pi's exported interactive components and prototypes. Keep Pi versions aligned across machines and run the regression test after upgrading Pi. See [the compatibility audit](docs/compatibility.md) for fixes, test coverage, and remaining terminal-verification and migration limits.
+
+The editor is Pi's actual default editor, not a Riff subclass. Riff hides the working indicator through `setWorkingVisible(false)`; this hides its text as well as its animation, but does not disable retry or compaction status indicators. Completed-turn timing remains in the transcript.
 
 ## Install
 
@@ -35,13 +40,13 @@ Update an installed copy with:
 pi update --extension git:github.com/Axiao89757/pi-riff
 ```
 
-Restart Pi after the first install. Use `/reload` after subsequent updates.
+Restart Pi after the first install. Use `/reload` after subsequent updates. For the Pi 1.1 compatibility update, restart once: existing prototype patches from older Riff versions cannot all be replaced safely in-process.
 
 ## Commands
 
 - `/image-size [full|thumbnail]`: toggle or set user image size
-- `/tool-style [full|compact|command|friendly]`: select tool rendering; Command is the default
-- `/compact-tools`: leave Full mode and return to Command rendering
+- `/tool-style [full|compact|command|friendly]`: select tool rendering; Friendly is the default. Compact uses Pi's official collapsed view (including result previews), Full its expanded view; Command/Friendly are Riff's dense alternatives
+- `/compact-tools`: leave Full mode and return to Friendly rendering
 - `/name <name>`: use Pi's built-in command to set the highlighted session name
 
 `Ctrl+O` cycles Full, Compact, Command, and Friendly tool rendering. `Ctrl+Shift+I` toggles user images between thumbnail and expanded display.
