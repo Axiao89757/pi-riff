@@ -3240,7 +3240,8 @@ export default function (pi: ExtensionAPI) {
 	const cumulativeAgentDurationByTimestamp = new Map<number | string, number>();
 	const agentRoundByTimestamp = new Map<number | string, number>();
 	let workingTimer: ReturnType<typeof setInterval> | undefined;
-	let workingTimerContext: ExtensionContext | undefined;
+	let workingTimerUI: ExtensionContext["ui"] | undefined;
+	let sessionThemeGetter: (() => FooterTheme) | undefined;
 
 	const restoreCumulativeAgentDuration = (ctx: ExtensionContext) => {
 		const restored = cumulativeAgentDurations(ctx.sessionManager.getBranch());
@@ -3257,12 +3258,12 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	const renderWorkingStatus = (width: number): string[] => {
-		if (agentStartedAt === undefined || workingTimerContext?.mode !== "tui" || width <= 0) return [];
+		if (agentStartedAt === undefined || !workingTimerUI || width <= 0) return [];
 		const now = performance.now();
 		const currentDurationMs = Math.max(0, now - agentStartedAt);
 		const currentDuration = formatWholeSeconds(currentDurationMs);
 		const cumulativeDuration = formatWholeSeconds(cumulativeAgentDurationMs + currentDurationMs);
-		const theme = workingTimerContext.ui.theme;
+		const theme = workingTimerUI.theme;
 		const frame = SPINNER_GLYPHS[Math.floor(now / WORKING_SPINNER_INTERVAL_MS) % SPINNER_GLYPHS.length];
 		const spinner = riffHighlight(frame, "warning", true, theme);
 		const round = riffHighlight(`第 ${completedAgentRounds + 1} 轮`, "warning", true, theme);
@@ -3274,13 +3275,13 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	const refreshWorkingTimer = () => {
-		if (agentStartedAt === undefined || workingTimerContext?.mode !== "tui") return;
+		if (agentStartedAt === undefined || !workingTimerUI) return;
 		assistantPresentationState().requestRender?.();
 	};
 
-	const startWorkingTimer = (ctx: typeof workingTimerContext) => {
-		if (ctx?.mode !== "tui" || workingTimer !== undefined) return;
-		workingTimerContext = ctx;
+	const startWorkingTimer = (ctx: ExtensionContext) => {
+		if (ctx.mode !== "tui" || workingTimer !== undefined) return;
+		workingTimerUI = ctx.ui;
 		refreshWorkingTimer();
 		workingTimer = setInterval(refreshWorkingTimer, WORKING_SPINNER_INTERVAL_MS);
 	};
@@ -3288,7 +3289,7 @@ export default function (pi: ExtensionAPI) {
 	const stopWorkingTimer = () => {
 		if (workingTimer !== undefined) clearInterval(workingTimer);
 		workingTimer = undefined;
-		workingTimerContext = undefined;
+		workingTimerUI = undefined;
 		footerTimerState().suffix = undefined;
 		assistantPresentationState().requestRender?.();
 	};
@@ -3350,6 +3351,10 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", () => {
+		// Prototype renderers can outlive the runner; release only our own callbacks.
+		if (footerTimerState().getTheme === sessionThemeGetter) footerTimerState().getTheme = undefined;
+		if (userMessageTimeState().getTheme === sessionThemeGetter) userMessageTimeState().getTheme = undefined;
+		sessionThemeGetter = undefined;
 		agentStartedAt = undefined;
 		pendingAgentStartedAt = undefined;
 		stopWorkingTimer();
@@ -3366,8 +3371,11 @@ export default function (pi: ExtensionAPI) {
 		toolState.groupGeneration = 0;
 		toolState.groupsAfterBody.clear();
 		toolState.spacedGroups.clear();
-		footerTimerState().getTheme = () => ctx.ui.theme;
-		userMessageTimeState().getTheme = () => ctx.ui.theme;
+		// Read the UI while ctx is active. Deferred renderers must never revisit ctx.
+		const ui = ctx.ui;
+		sessionThemeGetter = () => ui.theme;
+		footerTimerState().getTheme = sessionThemeGetter;
+		userMessageTimeState().getTheme = sessionThemeGetter;
 		if (ctx.mode === "tui") {
 			// Restore Pi's actual default editor, including future input fixes.
 			ctx.ui.setEditorComponent(undefined);

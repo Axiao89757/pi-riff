@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { randomUUID } from "node:crypto";
-import test, { after } from "node:test";
+import test, { after, beforeEach } from "node:test";
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const extensionPath = process.env.PI_RIFF_TEST_EXTENSION ?? join(repositoryRoot, "extensions", "pi-riff.ts");
@@ -50,6 +50,12 @@ const { initTheme, theme: activeTheme } = themeExports;
 initTheme("dark");
 const footerTimerState = globalThis[Symbol.for("pi.custom-pi.footer-timer")] ??= {};
 footerTimerState.getTheme = () => activeTheme;
+beforeEach(() => {
+	// Component fixtures run as an active session; lifecycle tests may clear these.
+	footerTimerState.getTheme = () => activeTheme;
+	const userState = globalThis[Symbol.for("pi.custom-pi.user-message-time")];
+	if (userState) userState.getTheme = () => activeTheme;
+});
 
 let legacyBindings = 0;
 const footerPrototype = FooterComponent.prototype;
@@ -265,6 +271,55 @@ test("session start restores the actual official editor with both borders and pr
 	} finally {
 		Object.assign(loaded.runtime, previous);
 		for (const handler of customPiExtension.handlers.get("session_shutdown") ?? []) await handler({}, {});
+	}
+});
+
+test("retained renderers survive real context invalidation and release theme callbacks on shutdown", async () => {
+	const { ExtensionRunner } = await import(pathToFileURL(join(piRoot, "dist", "core", "extensions", "runner.js")).href);
+	const { createExtensionRuntime } = await import(pathToFileURL(join(piRoot, "dist", "core", "extensions", "loader.js")).href);
+	const manager = { getBranch: () => [], getEntries: () => [], getCwd: () => repositoryRoot,
+		getSessionName: () => "test", getSessionId: () => "retained", getLeafId: () => null, getEntryCount: () => 0 };
+	const runner = new ExtensionRunner([], createExtensionRuntime(), repositoryRoot, manager, {});
+	let hook;
+	const ui = { theme: activeTheme, setEditorComponent() {}, setWorkingVisible() {},
+		setWidget(_key, factory) { hook = factory({ requestRender() {} }); },
+		setToolsExpanded() {}, setHiddenThinkingLabel() {} };
+	runner.setUIContext(ui, "tui");
+	const ctx = runner.createContext();
+	const userState = globalThis[Symbol.for("pi.custom-pi.user-message-time")];
+	const previous = { getSessionName: loaded.runtime.getSessionName, getAllTools: loaded.runtime.getAllTools };
+	const previousThemes = { footer: footerTimerState.getTheme, user: userState.getTheme };
+	loaded.runtime.getSessionName = () => "test";
+	loaded.runtime.getAllTools = () => [];
+	try {
+		for (const handler of customPiExtension.handlers.get("session_start") ?? []) await handler({}, ctx);
+		const footer = new FooterComponent({ state: { thinkingLevel: "off" }, sessionManager: manager,
+			modelRuntime: { isUsingSubscription: () => false }, getContextUsage: () => undefined }, {
+			getAvailableProviderCount: () => 0, getExtensionStatuses: () => new Map(), getGitBranch: () => null });
+		const message = new UserMessageComponent("重载后仍能显示", Date.now());
+		for (const handler of customPiExtension.handlers.get("agent_start") ?? []) await handler({}, ctx);
+		runner.invalidate();
+		assert.throws(() => ctx.ui, /ctx is stale/, "exercise Pi's actual stale-context guard");
+		assert.doesNotThrow(() => footer.render(80), "footer must not read the invalidated ctx");
+		assert.doesNotThrow(() => message.render(80), "user-message renderer must not read the invalidated ctx");
+		assert.equal(hook.render(80).length, 1, "busy widget must not read the invalidated ctx");
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		const changedTheme = { ...activeTheme, testThemeChange: true };
+		runner.getUIContext().theme = changedTheme;
+		assert.equal(footerTimerState.getTheme(), changedTheme);
+		assert.equal(userState.getTheme(), changedTheme);
+		for (const handler of customPiExtension.handlers.get("session_shutdown") ?? []) await handler({}, {});
+		assert.equal(footerTimerState.getTheme, undefined);
+		assert.equal(userState.getTheme, undefined);
+		assert.doesNotThrow(() => footer.render(80));
+		assert.doesNotThrow(() => message.render(80));
+		assert.deepEqual(hook.render(80), []);
+		hook.dispose();
+	} finally {
+		for (const handler of customPiExtension.handlers.get("session_shutdown") ?? []) await handler({}, {});
+		Object.assign(loaded.runtime, previous);
+		footerTimerState.getTheme = previousThemes.footer;
+		userState.getTheme = previousThemes.user;
 	}
 });
 

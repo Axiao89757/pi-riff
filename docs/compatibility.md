@@ -52,7 +52,8 @@ Scope: local Pi `1.1.0`, compared with Riff's previously documented `0.83.0` bas
 
 ### Themes, initialization and reload
 
-- Resolve the current `ctx.ui.theme` at render time rather than capturing a startup theme.
+- Capture the UI handle while the session context is active and resolve its theme at render time. Footer/user-message callbacks and the loading timer retain no `ctx`: Pi 1.1 rejects context access after runner invalidation. Release owned theme callbacks and the timer UI handle on shutdown.
+- A regression invalidates a real `ExtensionRunner` while busy, then renders retained footer/user-message/loading components and lets the timer tick. It verifies theme changes, callback cleanup and safe idle rendering after shutdown.
 - Replace fixed RGB highlight colors with semantic `success`, `accent` and `warning` theme roles for tools, dividers, session names and timing. Tests switch between real dark and light themes without recreating the dense tool component.
 - Limit editor/widget setup to TUI mode so RPC initialization proceeds normally.
 - Locate Pi by walking up from the resolved executable, supporting the new `dist/bundle/cli.js` entry point.
@@ -82,11 +83,11 @@ npm test
 git diff --check
 ```
 
-Result: **53 tests pass** on local Pi 1.1.0. Tests include real exported message/tool components, SDK initialization, retained legacy-patch simulation, ANSI background checks, native-output comparisons, footer scan counts, mouse events, theme changes, Kitty image allocation and repeated extension loading.
+Result: **54 tests pass** on local Pi 1.1.0. Tests include real exported message/tool components, SDK initialization, retained legacy-patch simulation, ANSI background checks, native-output comparisons, footer scan counts, mouse events, theme changes, Kitty image allocation and repeated extension loading.
 
 Compact/Full comparisons capture native ANSI output before loading Riff and cover seven builtin tools, unknown tools and a custom renderer across narrow/wide widths, padding 0/1/3, partial/final results and errors.
 
-The enabled local `~/.pi/agent/extensions/pi-riff.ts` was found to still contain the old BorderlessEditor. Its previous copy has been backed up and the enabled path now symlinks directly to the repository's `extensions/pi-riff.ts`, eliminating manual-copy drift. A real-editor regression test fails against the old copy and passes against the updated installed copy, checking that Pi's existing default editor is restored, both borders render, and pending input survives. All 53 tests also pass when loading through that enabled symlink. Global Pi settings were not changed; only the existing extension file was replaced by a link. Restart the running Pi process once to replace already-loaded old patches.
+The enabled local `~/.pi/agent/extensions/pi-riff.ts` was found to still contain the old BorderlessEditor. Its previous copy has been backed up and the enabled path now symlinks directly to the repository's `extensions/pi-riff.ts`, eliminating manual-copy drift. A real-editor regression test fails against the old copy and passes against the updated installed copy, checking that Pi's existing default editor is restored, both borders render, and pending input survives. All 54 tests also pass when loading through that enabled symlink. Global Pi settings were not changed; only the existing extension file was replaced by a link. Restart the running Pi process once to replace already-loaded old patches.
 
 Inspect the working copy in isolation:
 
