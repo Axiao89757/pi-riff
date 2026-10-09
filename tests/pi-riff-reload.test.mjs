@@ -190,17 +190,10 @@ const stripTerminalControls = (line) => line
 	.replace(/\x1b\[[0-9;]*m/g, "");
 
 test("Pi session name is the only title source", () => {
-	const tool = customPiExtension.tools.get("set_ctx_title");
-	assert.ok(tool);
+	assert.equal(customPiExtension.tools.has("set_ctx_title"), false, "Riff displays names but must not own the naming tool");
 	assert.equal(customPiExtension.commands.has("ctx-title"), false);
 	assert.equal(customPiExtension.commands.has("workspace-context"), false);
 	assert.equal(customPiExtension.tools.has("set_workspace_context"), false);
-	assert.equal("title" in tool.definition.parameters.properties, true);
-	assert.equal("intent" in tool.definition.parameters.properties, false);
-	assert.equal((tool.definition.parameters.required ?? []).includes("intent"), false);
-	assert.equal("status" in tool.definition.parameters.properties, false);
-	assert.match(tool.definition.description, /Pi's native session display name/);
-	assert.match(tool.definition.description, /active project's instructions/);
 
 	const source = readFileSync(extensionPath, "utf8");
 	assert.doesNotMatch(source, /registerCommand\("ctx-title"/);
@@ -415,7 +408,7 @@ test("legacy context titles migrate once into Pi's native session name", () => {
 		try {
 			await session.bindExtensions({ mode: "rpc", uiContext: ui });
 			const migratedName = session.sessionName;
-			const extension = extensionsResult.extensions.find((candidate) => candidate.tools.has("set_ctx_title"));
+			const extension = extensionsResult.extensions.find((candidate) => candidate.entryRenderers.has("compact-agent-timing"));
 			const oldTimingEntry = manager.getEntries().filter(
 				(entry) => entry.type === "custom" && entry.customType === "compact-agent-timing",
 			).at(-1);
@@ -423,9 +416,7 @@ test("legacy context titles migrate once into Pi's native session name", () => {
 				oldTimingEntry, {}, { fg: (_color, text) => text },
 			).render(100)[0].replace(/\\x1b\\[[0-9;]*m/g, "").trimEnd();
 			const inferredTiming = renderedTiming.slice(0, renderedTiming.lastIndexOf(" | "));
-			await extension.tools.get("set_ctx_title").definition.execute(
-				"set-name", { title: "Native title" }, undefined, undefined, {},
-			);
+			session.setSessionName("Native title");
 			console.log(JSON.stringify({
 				migratedName,
 				inferredTiming,
@@ -553,6 +544,35 @@ test("Friendly is the default and compact-tools returns to it", async () => {
 	state.displayMode = "full";
 	await command.handler("", { ui: { setToolsExpanded() {}, notify() {} } });
 	assert.equal(state.displayMode, "friendly");
+});
+
+test("Riff loads alongside a naming extension without duplicate set_ctx_title registration", () => {
+	const script = `
+		import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+		import { tmpdir } from "node:os";
+		import { join } from "node:path";
+		import { pathToFileURL } from "node:url";
+		const agentDir = mkdtempSync(join(tmpdir(), "pi-riff-naming-"));
+		mkdirSync(join(agentDir, "extensions"));
+		symlinkSync(${JSON.stringify(extensionPath)}, join(agentDir, "extensions", "pi-riff.ts"));
+		writeFileSync(join(agentDir, "extensions", "ctx-name-skill.ts"), ${JSON.stringify('export default function(pi) { pi.registerTool({ name: "set_ctx_title", label: "Set Session Name", description: "Owned by the explicit naming extension", parameters: { type: "object", properties: { title: { type: "string" } }, required: ["title"] }, async execute(_id, args) { pi.setSessionName(args.title); return { content: [{ type: "text", text: args.title }], details: { sessionName: args.title } }; } }); }')});
+		const { createAgentSession } = await import(pathToFileURL(join(${JSON.stringify(piRoot)}, "dist", "core", "sdk.js")).href);
+		const { SessionManager } = await import(pathToFileURL(join(${JSON.stringify(piRoot)}, "dist", "core", "session-manager.js")).href);
+		let session;
+		try {
+			const result = await createAgentSession({ cwd: ${JSON.stringify(repositoryRoot)}, agentDir,
+				sessionManager: SessionManager.inMemory(${JSON.stringify(repositoryRoot)}) });
+			session = result.session;
+			const ui = new Proxy({ theme: {}, getToolsExpanded: () => false }, { get: (target, key) => target[key] ?? (() => undefined) });
+			await session.bindExtensions({ mode: "rpc", uiContext: ui });
+			const owners = result.extensionsResult.extensions.filter((extension) => extension.tools.has("set_ctx_title"));
+			await owners[0].tools.get("set_ctx_title").definition.execute("name", { title: "Naming still works" });
+			console.log(JSON.stringify({ errors: result.extensionsResult.errors, ownerCount: owners.length,
+				owner: owners[0].resolvedPath.split("/").at(-1), name: session.sessionName }));
+		} finally { session?.dispose(); rmSync(agentDir, { recursive: true, force: true }); }
+	`;
+	const result = JSON.parse(execFileSync(process.execPath, ["--input-type=module"], { encoding: "utf8", input: script }));
+	assert.deepEqual(result, { errors: [], ownerCount: 1, owner: "ctx-name-skill.ts", name: "Naming still works" });
 });
 
 test("session initialization preserves other tools' business schemas including intent", () => {

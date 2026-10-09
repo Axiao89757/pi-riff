@@ -17,7 +17,7 @@ Personal [Pi](https://pi.dev) extension for a compact, work-focused terminal UI.
 - Pi's default editor with its working indicator hidden, focused footer provider/model and routed-model identity, native cached usage/subscription statistics, and highlighted native session name
 - Command/Friendly respect native output padding and support click-to-expand without swallowing viewport drag or wheel events
 - User images invalidate their native rendering caches when the theme or terminal cell dimensions change
-- Pi's native session name is the single title source for the footer and session selector
+- Pi's native session name is the single title source for the footer and session selector; Riff does not register a naming tool, so separate `ctx-name` extensions can coexist
 - Automatic collapse of tool output when a new tool starts
 
 ## Compatibility

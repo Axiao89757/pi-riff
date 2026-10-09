@@ -27,7 +27,6 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
@@ -3293,31 +3292,6 @@ export default function (pi: ExtensionAPI) {
 		footerTimerState().suffix = undefined;
 		assistantPresentationState().requestRender?.();
 	};
-
-	pi.registerTool({
-		name: "set_ctx_title",
-		label: "Set Session Name",
-		description: "Set and persist Pi's native session display name, shown as the highlighted footer title and in the session selector. Follow the active project's instructions when choosing the title. Omit title to clear it.",
-		promptSnippet: "Set or clear Pi's native session display name",
-		parameters: Type.Object({
-			title: Type.Optional(Type.String({
-				maxLength: MAX_SESSION_NAME_LENGTH,
-				description: "Short complete session name chosen according to the active project's instructions; omit to clear",
-			})),
-		}),
-		async execute(_toolCallId, params) {
-			const title = params.title === undefined ? undefined : normalizeSessionName(params.title);
-			if (params.title !== undefined && !title) throw new Error("Session name must not be empty.");
-			pi.setSessionName(title ?? "");
-			return {
-				content: [{
-					type: "text",
-					text: title ? `Session name set to ${title}` : "Session name cleared",
-				}],
-				details: { sessionName: title ?? null },
-			};
-		},
-	});
 
 	pi.registerEntryRenderer<AgentTimingEntry>(AGENT_TIMING_ENTRY, (entry, _options, theme) => {
 		const durationMs = entry.data?.durationMs;

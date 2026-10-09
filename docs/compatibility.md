@@ -45,6 +45,11 @@ Scope: local Pi `1.1.0`, compared with Riff's previously documented `0.83.0` bas
 - Continue using native Image components and their Kitty row allocation, conversion, image IDs and protocol encoding. Tests cover image-only message height, thumbnail/expanded rendering, narrow widths, cell-size changes and stable thumbnail image identity.
 - Actual Kitty/iTerm2 scrolling, viewport clipping, terminal resize and mixed image/text selection require real-terminal verification; protocol tests cannot certify terminal behavior.
 
+### Native session naming and extension coexistence
+
+- Riff displays Pi's native session name and migrates legacy Riff titles, but does not register `set_ctx_title`. A separate naming extension may own that tool without causing startup conflicts. Pi's built-in `/name` remains available without a naming extension.
+- An SDK regression loads Riff and a naming extension together, requires zero extension errors and exactly one tool owner, and verifies native session naming still works.
+
 ### Themes, initialization and reload
 
 - Resolve the current `ctx.ui.theme` at render time rather than capturing a startup theme.
@@ -77,11 +82,11 @@ npm test
 git diff --check
 ```
 
-Result: **52 tests pass** on local Pi 1.1.0. Tests include real exported message/tool components, SDK initialization, retained legacy-patch simulation, ANSI background checks, native-output comparisons, footer scan counts, mouse events, theme changes, Kitty image allocation and repeated extension loading.
+Result: **53 tests pass** on local Pi 1.1.0. Tests include real exported message/tool components, SDK initialization, retained legacy-patch simulation, ANSI background checks, native-output comparisons, footer scan counts, mouse events, theme changes, Kitty image allocation and repeated extension loading.
 
 Compact/Full comparisons capture native ANSI output before loading Riff and cover seven builtin tools, unknown tools and a custom renderer across narrow/wide widths, padding 0/1/3, partial/final results and errors.
 
-The enabled local `~/.pi/agent/extensions/pi-riff.ts` was found to still contain the old BorderlessEditor. Its previous copy has been backed up and the enabled path now symlinks directly to the repository's `extensions/pi-riff.ts`, eliminating manual-copy drift. A real-editor regression test fails against the old copy and passes against the updated installed copy, checking that Pi's existing default editor is restored, both borders render, and pending input survives. All 52 tests also pass when loading through that enabled symlink. Global Pi settings were not changed; only the existing extension file was replaced by a link. Restart the running Pi process once to replace already-loaded old patches.
+The enabled local `~/.pi/agent/extensions/pi-riff.ts` was found to still contain the old BorderlessEditor. Its previous copy has been backed up and the enabled path now symlinks directly to the repository's `extensions/pi-riff.ts`, eliminating manual-copy drift. A real-editor regression test fails against the old copy and passes against the updated installed copy, checking that Pi's existing default editor is restored, both borders render, and pending input survives. All 53 tests also pass when loading through that enabled symlink. Global Pi settings were not changed; only the existing extension file was replaced by a link. Restart the running Pi process once to replace already-loaded old patches.
 
 Inspect the working copy in isolation:
 
